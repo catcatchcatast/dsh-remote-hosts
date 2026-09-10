@@ -1,0 +1,34 @@
+{
+  "name": "@deepseek-ai/dsh-client-ui-directory-picker-browse",
+  "version": "0.1.2-rc.1-plugin.3",
+  "description": "Plugin-owned web directory picker supporting local and remote Host browsers",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": { "default": "./lib/index.js" },
+    "./client": { "default": "./lib/client.js" },
+    "./invariant": { "default": "./lib/invariant.js" },
+    "./package.json": "./package.json"
+  },
+  "files": ["lib", "README.md", "README.zh.md"],
+  "license": "MIT",
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-locale"
+      ],
+      "platform": "web"
+    }
+  },
+  "scripts": { "build": "tsdown --config tsdown.config.mjs" },
+  "dependencies": { "clsx": "^2.0.0" },
+  "devDependencies": {
+    "@types/react": "~18.3.1",
+    "react": "18.3.1",
+    "tsdown": "0.22.2",
+    "typescript": "^6.0.3"
+  }
+}

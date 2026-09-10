@@ -1,0 +1,24 @@
+{
+  "name": "dsh-browser-host-hub-rc1",
+  "version": "0.1.0-rc.1",
+  "description": "Bounded rc1 browser multi-Host official-wire BFF and transport hook",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": { "default": "./src/index.js" },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": ["src", "README.md", "cordis.patch.yml"],
+  "license": "MIT",
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
+  "scripts": { "test": "node --test ../../tests/browser-host-hub-rc1.test.mjs ../../tests/browser-host-stream-mux-rc1.test.mjs" },
+  "dependencies": {
+    "ws": "8.21.3"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.2",
+    "@deepseek-ai/dsh-client-connection": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-host-webserver": "0.1.2-rc.1"
+  }
+}

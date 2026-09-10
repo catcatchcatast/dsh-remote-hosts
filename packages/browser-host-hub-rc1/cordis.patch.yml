@@ -1,0 +1,4 @@
+# Shared directory entries are owned by mobile-controller-compat-rc1 in the rc1 profile.
+- insert:
+    - id: browser-host-hub-rc1
+      name: dsh-browser-host-hub-rc1

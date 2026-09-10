@@ -1,0 +1,17 @@
+node_modules/
+.pnpm-store/
+*.tsbuildinfo
+.artifacts/
+.tmp/
+build/
+packages/*/lib/
+*.log
+.codex/
+/docs/migration/
+.env
+.env.*
+*.pem
+*.key
+*.ppk
+*.tgz
+*.zip

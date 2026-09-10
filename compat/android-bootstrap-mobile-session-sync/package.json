@@ -1,0 +1,44 @@
+{
+  "name": "dsh-mobile-session-sync",
+  "version": "0.3.2",
+  "description": "Authoritative v2/v3 sequence-cursor history and mobile event sync routes for DSH native clients",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "build": "tsdown --config tsdown.config.mjs",
+    "test": "node --test ../../tests/mobile-session-sync.test.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-host-apiproxy": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-host-webserver": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-session": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/schemastery": "3.18.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "link:../../../dsh-core/vendor/cordis",
+    "@deepseek-ai/dsh-host-apiproxy": "link:../../../dsh-core/packages/host/apiproxy",
+    "@deepseek-ai/dsh-host-webserver": "link:../../../dsh-core/packages/host/webserver",
+    "@deepseek-ai/dsh-session": "link:../../../dsh-core/packages/core/session",
+    "@deepseek-ai/schemastery": "link:../../../dsh-core/vendor/schemastery",
+    "tsdown": "0.22.2",
+    "typescript": "^6.0.3"
+  }
+}

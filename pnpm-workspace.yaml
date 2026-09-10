@@ -1,0 +1,14 @@
+packages:
+  - 'compat/android-bootstrap-mobile-session-sync'
+  - 'packages/browser-host-hub-rc1'
+  - 'packages/mobile-bootstrap-rc1'
+  - 'packages/mobile-controller-compat-rc1'
+  - 'packages/mobile-interactions-compat-rc1'
+  - 'packages/mobile-session-sync-rc1'
+  - 'packages/mobile-stream-compat-rc1'
+  - 'packages/model-menu-filter'
+  - 'packages/rc1-host-carriers'
+  - 'packages/subscriptions-compat-rc1'
+  - 'packages/ui-directory-picker-browse'
+  - 'packages/ui-workspace-menu-compat-rc1'
+autoInstallPeers: false

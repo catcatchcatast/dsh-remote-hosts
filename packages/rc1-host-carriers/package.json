@@ -1,0 +1,10 @@
+{
+  "name": "dsh-rc1-host-carriers",
+  "version": "0.1.0-rc.1",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": { ".": "./src/index.js", "./cordis.patch.yml": "./cordis.patch.yml", "./package.json": "./package.json" },
+  "files": ["src", "cordis.patch.yml"],
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
+  "dependencies": { "dsh-mobile-interactions-compat-rc1": "workspace:*", "ws": "^8.18.0" }
+}

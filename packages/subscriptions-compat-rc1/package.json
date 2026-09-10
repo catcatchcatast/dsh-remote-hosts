@@ -1,0 +1,26 @@
+{
+  "name": "dsh-subscriptions-compat-rc1",
+  "version": "0.1.0-rc.1",
+  "description": "RC1 compatibility alias for the legacy Codex subscription LLM provider",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": ["src", "cordis.patch.yml"],
+  "license": "MIT",
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
+  "scripts": {
+    "test": "node --test ../../tests/subscriptions-compat-rc1.test.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.2",
+    "@deepseek-ai/dsh-llm": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-settings": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-web": "0.1.2-rc.1",
+    "@deepseek-ai/schemastery": "3.18.2",
+    "dsh-plugin-subscriptions": "0.8.0"
+  }
+}

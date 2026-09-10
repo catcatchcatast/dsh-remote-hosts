@@ -1,0 +1,9 @@
+{
+  "name": "dsh-mobile-bootstrap-rc1",
+  "version": "0.1.0-rc.1",
+  "type": "module",
+  "main": "./src/index.js",
+  "files": ["src", "cordis.patch.yml"],
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
+  "description": "SSH-only, owner-protected official DSH authentication bootstrap"
+}

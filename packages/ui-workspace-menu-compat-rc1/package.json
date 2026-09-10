@@ -1,0 +1,11 @@
+{
+  "name": "dsh-ui-workspace-menu-compat-rc1",
+  "version": "0.1.0-rc.1",
+  "description": "Pinned transformer for the formal rc1 workspace client bundle",
+  "type": "module",
+  "main": "./src/patch-client.mjs",
+  "exports": { ".": "./src/patch-client.mjs" },
+  "files": ["src"],
+  "license": "MIT",
+  "scripts": { "test": "node --test ../../tests/ui-workspace-session-menu.test.mjs" }
+}
