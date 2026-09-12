@@ -1,0 +1,40 @@
+name: Bug report
+description: Report a reproducible DSH Remote Hosts problem
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not include tokens, keys, authorization URLs, real IP addresses, hostnames, device serial numbers, session text, private logs, or unredacted screenshots."
+  - type: input
+    id: dsh_version
+    attributes:
+      label: DSH version
+      placeholder: 0.1.2-rc.1
+    validations:
+      required: true
+  - type: input
+    id: packages
+    attributes:
+      label: Package versions
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Reproduction and observed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed credentials, authorization URLs, personal identifiers, session content, and private host data.
+          required: true

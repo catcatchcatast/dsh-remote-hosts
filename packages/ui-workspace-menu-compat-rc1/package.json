@@ -6,6 +6,6 @@
   "main": "./src/patch-client.mjs",
   "exports": { ".": "./src/patch-client.mjs" },
   "files": ["src"],
-  "license": "MIT",
+  "license": "Apache-2.0",
   "scripts": { "test": "node --test ../../tests/ui-workspace-session-menu.test.mjs" }
 }

@@ -1,5 +1,10 @@
 # Release artifacts
 
+The current public release line is `v0.1.2-preview`, targets DSH
+`0.1.2-rc.1`, and must be published as a GitHub prerelease rather than Latest.
+DSH 0.1.5 adaptation is in progress but is not supported and has no promised
+release date.
+
 Plugin archives are published through GitHub Releases rather than committed to
 the source tree. Every release entry should contain:
 
@@ -10,6 +15,8 @@ the source tree. Every release entry should contain:
 | File | one generated package archive or Android bootstrap compatibility archive |
 | SHA-256 | 64 lowercase hexadecimal characters |
 | Source commit | Full Git commit identifier |
+| License | Apache-2.0 project license or the component's accurate third-party license |
+| Notices | `NOTICE` and required third-party attribution |
 
 Generate a checksum on Windows with:
 
@@ -22,3 +29,8 @@ build`. The separately versioned `dsh-mobile-session-sync-0.3.2.tgz` asset is
 the Android client's legacy-host bootstrap fallback; its source is under
 `compat/android-bootstrap-mobile-session-sync` and it is not part of the rc.1
 profile.
+
+Release notes must link the source commit, list every asset and SHA-256, state
+whether a package transforms an official DSH component, and include `LICENSE`
+and `NOTICE`. Questions use GitHub Issues; private logs and security reports go
+to `catcatchcatast@gmail.com`.

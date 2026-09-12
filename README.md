@@ -1,5 +1,9 @@
 # DSH Remote Hosts
 
+> **DSH 0.1.2 Preview** — compatible with DeepSeek Harness `0.1.2-rc.1`.
+> DSH 0.1.5 adaptation is in progress; it is not supported yet and has no
+> announced release date.
+
 Out-of-tree plugins that add multi-host access to DeepSeek Harness (DSH)
 without modifying `dsh-core`.
 
@@ -12,9 +16,9 @@ controlling computer.
 
 | DSH runtime | Support | Notes |
 | --- | --- | --- |
-| `0.1.2-rc.1` | Supported | Primary compatibility target. |
+| `0.1.2-rc.1` | Preview | Current compatibility target. |
 | Other `0.1.2` prereleases | Not claimed | Package and protocol seams can differ. |
-| Newer releases | Untested | Revalidate injected UI and RPC contracts first. |
+| `0.1.5` | Adapting | Not supported yet; no release date is promised. |
 
 See [COMPATIBILITY.md](COMPATIBILITY.md) for package roles and protocol
 requirements.
@@ -77,9 +81,19 @@ Source history does not contain plugin archives or routine build output.
 Published archives belong in GitHub Releases with a version and SHA-256 entry;
 see [RELEASES.md](RELEASES.md).
 
+The companion mobile client is
+[DSH T-remote for Android](https://github.com/catcatchcatast/dsh-t-remote-android).
+For help, use [GitHub Issues](https://github.com/catcatchcatast/dsh-remote-hosts/issues)
+or read [SUPPORT.md](SUPPORT.md). Security reports follow
+[SECURITY.md](SECURITY.md). Releases are available from
+[GitHub Releases](https://github.com/catcatchcatast/dsh-remote-hosts/releases).
+
+Search terms: DeepSeek Harness, DSH, remote hosts, remote plugin, multi-host,
+SSH, Tailscale; DSH 远程插件, DeepSeek Harness 远程主机.
+
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 ## Optional official-bundle regression
 

@@ -10,7 +10,7 @@
     "./package.json": "./package.json"
   },
   "files": ["src", "cordis.patch.yml"],
-  "license": "MIT",
+  "license": "Apache-2.0",
   "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
   "scripts": {
     "test": "node --test ../../tests/subscriptions-compat-rc1.test.mjs"

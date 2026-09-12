@@ -6,7 +6,7 @@
   "main": "./src/index.js",
   "exports": { ".": { "default": "./src/index.js" }, "./cordis.patch.yml": "./cordis.patch.yml", "./package.json": "./package.json" },
   "files": ["src", "cordis.patch.yml", "README.md"],
-  "license": "MIT",
+  "license": "Apache-2.0",
   "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
   "scripts": { "test": "node --test ../../tests/mobile-stream-compat-rc1.test.mjs" },
   "peerDependencies": {

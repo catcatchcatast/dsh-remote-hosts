@@ -1,6 +1,7 @@
 {
   "name": "dsh-remote-hosts-workspace",
   "version": "0.2.0",
+  "license": "Apache-2.0",
   "private": true,
   "description": "Out-of-tree Remote Hosts compatibility plugins for DSH 0.1.2-rc.1",
   "packageManager": "pnpm@11.19.0",

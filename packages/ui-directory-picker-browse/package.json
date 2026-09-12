@@ -11,7 +11,7 @@
     "./package.json": "./package.json"
   },
   "files": ["lib", "README.md", "README.zh.md"],
-  "license": "MIT",
+  "license": "Apache-2.0",
   "dsh": {
     "client": {
       "inject": [

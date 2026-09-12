@@ -90,6 +90,11 @@ function sourceHashEntries(items, sourceRoot) {
     }
     for (const relative of inputs) files.push({ path: path.posix.join('packages', item.directory, relative.replaceAll(path.sep, '/')), sha256: fileHash(path.join(item.packageDir, relative)) })
   }
+  for (const relative of ['LICENSE', 'NOTICE']) {
+    const file = path.join(sourceRoot, relative)
+    if (!fs.existsSync(file)) throw new Error(`RELEASE_${relative}_MISSING`)
+    files.push({ path: relative, sha256: fileHash(file) })
+  }
   return files.sort((a, b) => a.path.localeCompare(b.path))
 }
 
@@ -119,9 +124,12 @@ function rewriteWorkspaceDependencies(manifest, versions, packageDirectory) {
   return { manifest: copy, rewrites }
 }
 
-function copyPackage(source, destination, manifest) {
+function copyPackage(sourceRoot, source, destination, manifest) {
   fs.mkdirSync(destination, { recursive: true })
-  fs.writeFileSync(path.join(destination, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`)
+  const packedManifest = structuredClone(manifest)
+  packedManifest.files = [...new Set([...packedManifest.files, 'LICENSE', 'NOTICE'])]
+  fs.writeFileSync(path.join(destination, 'package.json'), `${JSON.stringify(packedManifest, null, 2)}\n`)
+  for (const relative of ['LICENSE', 'NOTICE']) fs.copyFileSync(path.join(sourceRoot, relative), path.join(destination, relative))
   for (const relative of declaredSourceFiles(source).filter(file => file !== 'package.json')) {
     const from = path.join(source.packageDir, relative)
     const to = path.join(destination, relative)
@@ -173,7 +181,7 @@ export function buildRelease({ sourceRoot = sourceDefault, stagingDir } = {}) {
     for (const item of items) {
       const rewritten = rewriteWorkspaceDependencies(item.manifest, versions, item.directory)
       const temporaryPackage = path.join(temporary, item.directory)
-      copyPackage(item, temporaryPackage, rewritten.manifest)
+      copyPackage(sourceRoot, item, temporaryPackage, rewritten.manifest)
       const artifact = npmPack(temporaryPackage, stagingDir)
       generated.push(artifact)
       const artifactSha256 = fileHash(artifact)

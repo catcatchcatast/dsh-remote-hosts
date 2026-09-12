@@ -36,12 +36,17 @@ test('packs every rc1 adapter and browser picker offline with candidate source h
       assert.equal(statSync(artifact).isFile(), true)
       assert.equal(readFileSync(`${artifact}.sha256`, 'utf8'), `${item.artifactSha256}  ${item.artifact}\n`)
       const packedManifest = JSON.parse(execFileSync('tar', ['-xOf', artifact, 'package/package.json'], { encoding: 'utf8', windowsHide: true }))
+      assert.match(execFileSync('tar', ['-xOf', artifact, 'package/LICENSE'], { encoding: 'utf8', windowsHide: true }), /Apache License[\s\S]*Version 2\.0/)
+      assert.match(execFileSync('tar', ['-xOf', artifact, 'package/NOTICE'], { encoding: 'utf8', windowsHide: true }), /DSH Remote Hosts contributors/)
       for (const field of ['dependencies', 'optionalDependencies', 'devDependencies', 'peerDependencies']) {
         for (const value of Object.values(packedManifest[field] ?? {})) assert.equal(String(value).startsWith('workspace:'), false)
       }
     }
     assert.equal(JSON.parse(readFileSync(path.join(staging, 'rc1-release-manifest.json'), 'utf8')).sourceCommitFrozen, false)
-    assert.equal(JSON.parse(readFileSync(path.join(staging, 'source-content-hashes.json'), 'utf8')).sourceTreeHash, result.sourceTreeHash)
+    const sourceHashes = JSON.parse(readFileSync(path.join(staging, 'source-content-hashes.json'), 'utf8'))
+    assert.equal(sourceHashes.sourceTreeHash, result.sourceTreeHash)
+    assert.ok(sourceHashes.files.some(file => file.path === 'LICENSE'))
+    assert.ok(sourceHashes.files.some(file => file.path === 'NOTICE'))
   } finally {
     rmSync(staging, { recursive: true, force: true })
   }
