@@ -1,7 +1,7 @@
 /**
  * Loopback-only v2 mobile Session sync for the official DSH 0.1.2-rc.1
  * controller faces. This adapter deliberately does not depend on the removed
- * earlier proxy layer or on an implicit/current Host selection.
+ * rc.8 proxy layer or on an implicit/current Host selection.
  *
  */
 
@@ -10,9 +10,7 @@ import { randomUUID } from 'node:crypto'
 export const name = 'mobile-session-sync-rc1'
 export const inject = [
   'webServer',
-  'connection',
-  'sessionController',
-  'workspaceController',
+  'runtimeInterface',
 ]
 
 export const MOBILE_SESSION_DELTA_PATH = '/api/mobile.sessionDelta'
@@ -56,11 +54,21 @@ export const Config = Object.freeze({
   },
 })
 
+function runtimeOf(ctx) {
+  const runtime = ctx?.runtimeInterface
+  if (!runtime || typeof runtime !== 'object'
+      || typeof runtime.decodeMobileIngress !== 'function'
+      || !runtime.session || !runtime.workspace || !runtime.connection) {
+    throw new TypeError('runtimeInterface is required')
+  }
+  return runtime
+}
+
 /** Read later events from one fixed rc1 follow snapshot and bounded pages. */
-export async function readSessionDelta(controllerOrContext, request, options, signal) {
-  const controller = controllerOrContext?.sessionController ?? controllerOrContext
+export async function readSessionDelta(sessionPort, request, options, signal) {
+  const controller = sessionPort
   if (!controller || typeof controller.follow !== 'function' || typeof controller.page !== 'function') {
-    throw new TypeError('sessionController with follow and page is required')
+    throw new TypeError('runtimeInterface.session with follow and page is required')
   }
 
   const effectiveSignal = signal ?? (isAbortSignal(options) ? options : undefined) ?? new AbortController().signal
@@ -225,23 +233,23 @@ export async function readSessionDelta(controllerOrContext, request, options, si
  * opening cursor, so no phone clock or moving tail is trusted.
  */
 export async function readSessionSyncSnapshot(first, second, third) {
-  const { sessionController, workspaceController, signal } = normalizeSnapshotArgs(first, second, third)
-  if (!sessionController || typeof sessionController.list !== 'function') {
-    throw new TypeError('sessionController with list is required')
+  const { session, workspace, signal } = normalizeSnapshotArgs(first, second, third)
+  if (!session || typeof session.list !== 'function') {
+    throw new TypeError('runtimeInterface.session with list is required')
   }
-  if (!workspaceController || typeof workspaceController.follow !== 'function') {
-    throw new TypeError('workspaceController with follow is required')
+  if (!workspace || typeof workspace.follow !== 'function') {
+    throw new TypeError('runtimeInterface.workspace with follow is required')
   }
   const effectiveSignal = signal ?? new AbortController().signal
   throwIfAborted(effectiveSignal)
 
   const snapshotId = randomUUID()
   let listed
-  let workspace
+  let workspaceBaseline
   try {
-    ;[listed, workspace] = await Promise.all([
-      raceAbort(Promise.resolve(sessionController.list({}, effectiveSignal)), effectiveSignal),
-      readWorkspaceBaseline(workspaceController, effectiveSignal),
+    ;[listed, workspaceBaseline] = await Promise.all([
+      raceAbort(Promise.resolve(session.list({}, effectiveSignal)), effectiveSignal),
+      readWorkspaceBaseline(workspace, effectiveSignal),
     ])
   } catch (error) {
     throwOrReturnCancellation(error, effectiveSignal)
@@ -256,9 +264,9 @@ export async function readSessionSyncSnapshot(first, second, third) {
     return failureResult(error)
   }
   if (!listValue || !Array.isArray(listValue.items)) {
-    return failureResult(new Error('sessionController.list returned an invalid value'))
+    return failureResult(new Error('runtimeInterface.session.list returned an invalid value'))
   }
-  const archived = new Set(Array.isArray(workspace.archivedSessionIds) ? workspace.archivedSessionIds : [])
+  const archived = new Set(Array.isArray(workspaceBaseline.archivedSessionIds) ? workspaceBaseline.archivedSessionIds : [])
   const sessions = []
   for (const summary of listValue.items) {
     if (!summary || typeof summary !== 'object' || typeof summary.sessionId !== 'string') continue
@@ -271,7 +279,7 @@ export async function readSessionSyncSnapshot(first, second, third) {
     }
     try {
       const opening = await openSessionSnapshot(
-        sessionController,
+        session,
         { kind: 'session', sessionId: summary.sessionId },
         1,
         effectiveSignal,
@@ -299,23 +307,24 @@ export function apply(ctx, config = {}) {
   if (!ctx || !ctx.webServer || typeof ctx.webServer.register !== 'function') {
     throw new TypeError('webServer is required')
   }
+  const runtime = runtimeOf(ctx)
   const register = () => {
     const disposers = []
     try {
       disposers.push(ctx.webServer.register({
         kind: 'exact',
         path: MOBILE_SESSION_DELTA_PATH,
-        handler: (req, res) => handleDeltaRequest(ctx, req, res, resolved),
+        handler: (req, res) => handleDeltaRequest(runtime, req, res, resolved),
       }))
       disposers.push(ctx.webServer.register({
         kind: 'exact',
         path: MOBILE_SESSION_SYNC_DESCRIBE_PATH,
-        handler: (req, res) => handleDescribeRequest(ctx, req, res, resolved),
+        handler: (req, res) => handleDescribeRequest(runtime, req, res, resolved),
       }))
       disposers.push(ctx.webServer.register({
         kind: 'exact',
         path: MOBILE_SESSION_SYNC_SNAPSHOT_PATH,
-        handler: (req, res) => handleSnapshotRequest(ctx, req, res, resolved),
+        handler: (req, res) => handleSnapshotRequest(runtime, req, res, resolved),
       }))
     } catch (error) {
       for (const dispose of disposers.reverse()) {
@@ -330,8 +339,8 @@ export function apply(ctx, config = {}) {
     : register()
 }
 
-function handleDescribeRequest(ctx, req, res, config) {
-  if (!authorizeHttpRequest(ctx, req, res, config.maxResponseBytes)) return
+function handleDescribeRequest(runtime, req, res, config) {
+  if (!authorizeHttpRequest(runtime, req, res, config.maxResponseBytes)) return
   if (req.method !== 'GET') {
     sendJson(res, 405, { error: 'method not allowed' }, config.maxResponseBytes)
     return
@@ -350,8 +359,8 @@ function handleDescribeRequest(ctx, req, res, config) {
   }, config.maxResponseBytes)
 }
 
-async function handleDeltaRequest(ctx, req, res, config) {
-  if (!authorizeHttpRequest(ctx, req, res, config.maxResponseBytes)) return
+async function handleDeltaRequest(runtime, req, res, config) {
+  if (!authorizeHttpRequest(runtime, req, res, config.maxResponseBytes)) return
   if (req.method !== 'POST') {
     sendJson(res, 405, { error: 'method not allowed' }, config.maxResponseBytes)
     return
@@ -360,13 +369,13 @@ async function handleDeltaRequest(ctx, req, res, config) {
     sendJson(res, 415, { error: 'content type must be application/json' }, config.maxResponseBytes)
     return
   }
-  await handleJsonRequest(ctx, req, res, config, 'mobile.sessionDelta', async (message, signal) => {
-    return readSessionDelta(ctx.sessionController, message.payload, config, signal)
+  await handleJsonRequest(runtime, req, res, config, 'mobile.sessionDelta', async (ingress, signal) => {
+    return readSessionDelta(runtime.session, ingress.payload, config, signal)
   })
 }
 
-async function handleSnapshotRequest(ctx, req, res, config) {
-  if (!authorizeHttpRequest(ctx, req, res, config.maxResponseBytes)) return
+async function handleSnapshotRequest(runtime, req, res, config) {
+  if (!authorizeHttpRequest(runtime, req, res, config.maxResponseBytes)) return
   if (req.method !== 'POST') {
     sendJson(res, 405, { error: 'method not allowed' }, config.maxResponseBytes)
     return
@@ -375,23 +384,25 @@ async function handleSnapshotRequest(ctx, req, res, config) {
     sendJson(res, 415, { error: 'content type must be application/json' }, config.maxResponseBytes)
     return
   }
-  await handleJsonRequest(ctx, req, res, config, 'mobile.sessionSyncSnapshot', async (_message, signal) => {
-    return readSessionSyncSnapshot(ctx.sessionController, ctx.workspaceController, signal)
+  await handleJsonRequest(runtime, req, res, config, 'mobile.sessionSyncSnapshot', async (_ingress, signal) => {
+    return readSessionSyncSnapshot(runtime.session, runtime.workspace, signal)
   })
 }
 
-async function handleJsonRequest(ctx, req, res, config, method, operation) {
+async function handleJsonRequest(runtime, req, res, config, method, operation) {
   const lifetime = createRequestLifetime(req, res, config.requestTimeoutMs)
   let rpcId = 'invalid'
   try {
     const body = await raceAbort(readBody(req, config.maxRequestBytes, lifetime.signal), lifetime.signal)
-    const message = JSON.parse(body)
-    rpcId = typeof message?.rpcId === 'string' && message.rpcId.length > 0 ? message.rpcId : 'invalid'
-    if (message?.type !== 'client-request' || message?.method !== method) {
-      sendJson(res, 400, serverFailure(rpcId, `invalid ${method} request`), config.maxResponseBytes)
-      return
-    }
-    const result = await operation(message, lifetime.signal)
+    const ingress = runtime.decodeMobileIngress({
+      route: method,
+      body,
+      headers: req.headers,
+      type: 'client-request',
+      method,
+    })
+    rpcId = ingress.rpcId
+    const result = await operation(ingress, lifetime.signal)
     if (lifetime.timedOut) {
       sendJson(res, 408, { error: 'request timeout' }, config.maxResponseBytes)
       return
@@ -415,12 +426,12 @@ async function handleJsonRequest(ctx, req, res, config, method, operation) {
   }
 }
 
-function authorizeHttpRequest(ctx, req, res, maxResponseBytes) {
+function authorizeHttpRequest(runtime, req, res, maxResponseBytes) {
   if (!isLoopback(req)) {
     sendJson(res, 403, { error: 'forbidden' }, maxResponseBytes)
     return false
   }
-  const connection = ctx.connection
+  const connection = runtime?.connection
   if (!connection || typeof connection.requestRejection !== 'function') {
     sendJson(res, 503, { error: 'authentication unavailable' }, maxResponseBytes)
     return false
@@ -556,80 +567,27 @@ function decodeHistoryRecord(record) {
     throw new BaselineRecoveryError('unsupported-record')
   }
   if (record.type === 'event') {
-    const event = record.event
+    const event = canonicalEventForV2(record.event)
     if (!event || typeof event !== 'object' || Array.isArray(event) || typeof event.type !== 'string') {
       throw new BaselineRecoveryError('unsupported-record')
     }
     if (!isSafeSequence(event.seq)) throw new BaselineRecoveryError('unsupported-record')
     return [{ event }]
   }
-  if (record.type !== 'chunks') throw new BaselineRecoveryError('unsupported-record')
-  return expandChunkRun(record.event)
+  throw new BaselineRecoveryError('unsupported-record')
 }
 
-/** Expand the exact rc1 SessionHistoryRecord chunk-row wire form. */
-function expandChunkRun(event) {
-  if (!event || typeof event !== 'object' || Array.isArray(event)
-      || typeof event.type !== 'string' || typeof event.seq !== 'number'
-      || typeof event.time !== 'number' || !event.data || typeof event.data !== 'object') {
-    throw new BaselineRecoveryError('unsupported-record')
+/** Canonical legacy chunk DTOs are restored only for the stable v2 wire. */
+function canonicalEventForV2(event) {
+  if (event?.type !== 'legacy/assistant-chunk' || event?.data?.legacyType !== 'assistant/chunk') return event
+  const data = event.data.data
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new BaselineRecoveryError('unsupported-record')
+  return {
+    type: 'assistant/chunk',
+    seq: event.seq,
+    ...(event.time === undefined ? {} : { time: event.time }),
+    data,
   }
-  const rowType = event.type
-  if (!['chunkrow/text-chunks', 'chunkrow/reasoning-chunks', 'chunkrow/tool-call-chunks'].includes(rowType)) {
-    throw new BaselineRecoveryError('unsupported-record')
-  }
-  if (!isSafeSequence(event.seq) || !Number.isSafeInteger(event.time)) {
-    throw new BaselineRecoveryError('unsupported-record')
-  }
-  const data = event.data
-  const isTool = rowType === 'chunkrow/tool-call-chunks'
-  const payload = isTool ? data.args : data.texts
-  if (!Array.isArray(payload) || payload.length === 0 || payload.some(item => typeof item !== 'string')) {
-    throw new BaselineRecoveryError('unsupported-record')
-  }
-  if (!Array.isArray(data.dt) || data.dt.length !== payload.length - 1
-      || data.dt.some(item => !Number.isSafeInteger(item))) {
-    throw new BaselineRecoveryError('unsupported-record')
-  }
-  if (typeof data.turn !== 'number' || typeof data.step !== 'number' || typeof data.index !== 'number') {
-    throw new BaselineRecoveryError('unsupported-record')
-  }
-  if (isTool && typeof data.id !== 'string') throw new BaselineRecoveryError('unsupported-record')
-  if (isTool && data.name !== undefined && typeof data.name !== 'string') {
-    throw new BaselineRecoveryError('unsupported-record')
-  }
-  const entries = []
-  let time = event.time
-  for (let index = 0; index < payload.length; index += 1) {
-    if (index > 0) time += data.dt[index - 1]
-    const seq = event.seq + index
-    if (!isSafeSequence(seq) || !Number.isSafeInteger(time)) {
-      throw new BaselineRecoveryError('unsupported-record')
-    }
-    let chunk
-    if (rowType === 'chunkrow/text-chunks') {
-      chunk = { type: 'text-delta', index: data.index, text: payload[index] }
-    } else if (rowType === 'chunkrow/reasoning-chunks') {
-      chunk = { type: 'reasoning-delta', index: data.index, text: payload[index] }
-    } else {
-      chunk = {
-        type: 'tool-call-delta',
-        index: data.index,
-        id: data.id,
-        ...(data.name === undefined ? {} : { name: data.name }),
-        argumentsDelta: payload[index],
-      }
-    }
-    entries.push({
-      event: {
-        type: 'assistant/chunk',
-        seq,
-        time,
-        data: { turn: data.turn, step: data.step, chunk },
-      },
-    })
-  }
-  return entries
 }
 
 function dedupeAndSort(entries, afterSeq, throughSeq) {
@@ -689,10 +647,10 @@ function unwrapControllerValue(value) {
 }
 
 function normalizeSnapshotArgs(first, second, third) {
-  if (first?.sessionController && first?.workspaceController) {
-    return { sessionController: first.sessionController, workspaceController: first.workspaceController, signal: second ?? third }
+  if (first?.session && first?.workspace) {
+    return { session: first.session, workspace: first.workspace, signal: second ?? third }
   }
-  return { sessionController: first, workspaceController: second, signal: third }
+  return { session: first, workspace: second, signal: third }
 }
 
 async function toAsyncIterator(value) {

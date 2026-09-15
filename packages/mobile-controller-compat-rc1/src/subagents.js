@@ -15,32 +15,32 @@ export const MOBILE_SUBAGENT_COMPAT_METHODS = Object.freeze([
 /**
  * Dispatch one Android subagent RPC against the official public services.
  *
- * The host adapter must inject `subagents` and `sessionController`.  It must
+ * The host adapter must inject canonical `subagents` and `session` ports. It must
  * also inject `mobileHistoryMapper` (the bridge's existing
  * `mapHistoryRecords` export) so this file cannot accidentally grow a second
  * history decoder or create an import cycle.
  */
-export async function dispatchSubagent(ctx, method, payload, signal, rpcId) {
+export async function dispatchSubagent(ports, method, payload, signal, rpcId) {
   if (!MOBILE_SUBAGENT_COMPAT_METHODS.includes(method)) {
     throw new CapabilityUnavailableError(`${method} is not implemented by this bridge`)
   }
   throwIfAborted(signal)
   switch (method) {
     case 'subagent.list':
-      return listSubagents(ctx, payload, signal)
+      return listSubagents(ports, payload, signal)
     case 'subagent.history':
-      return readSubagentHistory(ctx, payload, signal)
+      return readSubagentHistory(ports, payload, signal)
     case 'subagent.prompt':
-      return promptSubagent(ctx, payload, signal, rpcId)
+      return promptSubagent(ports, payload, signal, rpcId)
     case 'subagent.interrupt':
-      return interruptSubagent(ctx, payload, signal)
+      return interruptSubagent(ports, payload, signal)
   }
 }
 
-async function listSubagents(ctx, payload, signal) {
+async function listSubagents(ports, payload, signal) {
   expectObject(payload)
   const parentSessionId = normalizeSessionId(payload.parentSessionId, 'parentSessionId')
-  const service = ctx?.subagents
+  const service = ports?.subagents
   assertService(service, 'subagents', ['remoteExportList'])
   const value = unwrapControllerValue(await service.remoteExportList(parentSessionId, signal))
   if (!isPlainObject(value) || !Array.isArray(value.entries) || typeof value.parentAvailable !== 'boolean') {
@@ -52,12 +52,12 @@ async function listSubagents(ctx, payload, signal) {
   }
 }
 
-async function readSubagentHistory(ctx, payload, signal) {
+async function readSubagentHistory(ports, payload, signal) {
   expectObject(payload)
   const request = normalizeHistoryRequest(payload)
-  const controller = ctx?.sessionController
-  assertService(controller, 'sessionController', ['follow', 'page'])
-  const mapper = resolveHistoryMapper(ctx)
+  const controller = ports?.session
+  assertService(controller, 'runtimeInterface.session', ['follow', 'page'])
+  const mapper = resolveHistoryMapper(ports)
   const address = subagentAddress(request.parentSessionId, request.childSessionId, request.mode)
   const source = await controller.follow({
     address,
@@ -108,21 +108,21 @@ async function readSubagentHistory(ctx, payload, signal) {
   }
 }
 
-async function promptSubagent(ctx, payload, signal, rpcId) {
+async function promptSubagent(ports, payload, signal, rpcId) {
   expectObject(payload)
   const requestId = requireRpcId(rpcId)
   const request = normalizePromptRequest(payload, requestId)
-  const service = ctx?.subagents
+  const service = ports?.subagents
   assertService(service, 'subagents', ['prompt'])
   return unwrapControllerValue(await service.prompt(request, signal))
 }
 
-async function interruptSubagent(ctx, payload, signal) {
+async function interruptSubagent(ports, payload, signal) {
   expectObject(payload)
   const parentSessionId = normalizeSessionId(payload.parentSessionId, 'parentSessionId')
   const childSessionId = normalizeSessionId(payload.childSessionId, 'childSessionId')
   requireContinuableMode(payload.mode)
-  const service = ctx?.subagents
+  const service = ports?.subagents
   assertService(service, 'subagents', ['interruptByParent'])
   // The official primitive is synchronous and has no signal parameter.  Do
   // not turn cancellation into a different request; only avoid invoking it
@@ -136,8 +136,8 @@ async function interruptSubagent(ctx, payload, signal) {
   return value
 }
 
-function resolveHistoryMapper(ctx) {
-  const mapper = ctx?.mobileHistoryMapper ?? ctx?.mapHistoryRecords
+function resolveHistoryMapper(ports) {
+  const mapper = ports?.mobileHistoryMapper ?? ports?.mapHistoryRecords
   if (typeof mapper !== 'function') {
     throw new CapabilityUnavailableError('subagent history mapper is unavailable')
   }

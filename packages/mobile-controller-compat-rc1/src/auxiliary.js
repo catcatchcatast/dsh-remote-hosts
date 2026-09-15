@@ -1,9 +1,9 @@
 /**
  * Small compatibility surface for Android operations which are not owned by
  * the session/workspace controller.  The dispatcher consumes a plain facade,
- * so the host bridge can pass only `sessionController`, `commands`, and
- * `goals` from the current Cordis context; this module does not add a Cordis
- * service or import the main bridge.
+ * so the host bridge can pass only the runtime interface's narrow
+ * `agentOperations` facade; this module does not add a Cordis service or
+ * import the main bridge.
  *
  */
 
@@ -37,10 +37,12 @@ export async function dispatchAuxiliary(ctx, method, payload, signal) {
 
 async function executeCommand(ctx, payload, signal) {
   const request = commandRequest(payload)
-  const agent = await resolveAgent(ctx, request.agentId)
-  const commands = ctx?.commands
-  assertService(commands, 'commands', ['execute'])
-  return unwrap(await commands.execute(agent, request.line, request.images, signal))
+  const operations = operationService(ctx)
+  return callOperation(operations.commands?.execute, 'commands.execute', {
+    sessionId: request.agentId,
+    line: request.line,
+    images: request.images,
+  }, signal)
 }
 
 async function createGoal(ctx, payload) {
@@ -49,13 +51,12 @@ async function createGoal(ctx, payload) {
   const objective = requireString(payload.objective, 'objective').trim()
   if (objective.length === 0) throw new BadRequestError('objective must not be blank')
   const maxGoalRounds = optionalPositiveInteger(payload.maxGoalRounds, 'maxGoalRounds')
-  const goals = ctx?.goals
-  assertService(goals, 'goals', ['remoteExportCreate'])
-  const agent = await resolveAgent(ctx, sessionId)
-  const value = unwrap(await goals.remoteExportCreate(agent, {
+  const operations = operationService(ctx)
+  const value = await callOperation(operations.goal?.create, 'goal.create', {
+    sessionId,
     objective,
     ...(maxGoalRounds === undefined ? {} : { maxGoalRounds }),
-  }))
+  })
   return requireGoalRefResult(value, 'goal create result')
 }
 
@@ -63,10 +64,7 @@ async function mutateGoal(ctx, operation, payload) {
   expectObject(payload)
   const sessionId = requireSessionId(payload.sessionId)
   const ref = normalizeGoalRef(payload.ref)
-  const goals = ctx?.goals
-  assertService(goals, 'goals', [operation])
-  const agent = await resolveAgent(ctx, sessionId)
-  const value = unwrap(await goals[operation](agent, ref))
+  const value = await callOperation(operationService(ctx).goal?.[operation], `goal.${operation}`, { sessionId, ref })
   return requireGoalViewResult(value, `goal ${operation} result`)
 }
 
@@ -74,10 +72,7 @@ async function clearGoal(ctx, payload) {
   expectObject(payload)
   const sessionId = requireSessionId(payload.sessionId)
   const ref = normalizeGoalRef(payload.ref)
-  const goals = ctx?.goals
-  assertService(goals, 'goals', ['clear'])
-  const agent = await resolveAgent(ctx, sessionId)
-  unwrap(await goals.clear(agent, ref))
+  await callOperation(operationService(ctx).goal?.clear, 'goal.clear', { sessionId, ref })
   return { cleared: true }
 }
 
@@ -92,15 +87,6 @@ function commandRequest(payload) {
     line: normalizeCommandLine(args.line),
     images: normalizeImages(args.images ?? []),
   }
-}
-
-async function resolveAgent(ctx, sessionId) {
-  const controller = ctx?.sessionController
-  assertService(controller, 'sessionController', ['resolveAgent'])
-  const resolved = unwrap(await controller.resolveAgent(sessionId))
-  if (resolved && typeof resolved === 'object' && resolved.agent !== undefined) return resolved.agent
-  if (!resolved || typeof resolved !== 'object') throw new CapabilityUnavailableError('session Agent is unavailable')
-  return resolved
 }
 
 function normalizeCommandLine(value) {
@@ -154,9 +140,23 @@ function requireSessionId(value, name = 'sessionId') {
   return id
 }
 
-function assertService(service, name, methods) {
-  if (!service || methods.some(method => typeof service[method] !== 'function')) {
-    throw new CapabilityUnavailableError(`${name} is unavailable`)
+function operationService(ctx) {
+  const operations = ctx?.agentOperations
+  if (!operations || typeof operations !== 'object') {
+    throw new CapabilityUnavailableError('agent operations are unavailable')
+  }
+  return operations
+}
+
+async function callOperation(operation, name, ...args) {
+  if (typeof operation !== 'function') throw new CapabilityUnavailableError(`${name} is unavailable`)
+  try {
+    return await operation(...args)
+  } catch (error) {
+    if (error?.code === 'runtime-interface/capability-unavailable') {
+      throw new CapabilityUnavailableError(error.message)
+    }
+    throw error
   }
 }
 
@@ -191,18 +191,6 @@ function normalizeSafeInteger(value, name, min) {
 
 function optionalFields(value) {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined))
-}
-
-function unwrap(value) {
-  if (value && typeof value === 'object' && typeof value.ok === 'boolean' && Object.hasOwn(value, 'value')) {
-    if (!value.ok) throw value.error ?? new Error('controller returned a failed result')
-    return value.value
-  }
-  if (value && typeof value === 'object' && value.result && typeof value.result.ok === 'boolean') {
-    if (!value.result.ok) throw value.result.error ?? new Error('controller returned a failed result')
-    return value.result.value
-  }
-  return value
 }
 
 function throwIfAborted(signal) {

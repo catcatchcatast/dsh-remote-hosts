@@ -1,22 +1,27 @@
 {
   "name": "dsh-remote-hosts-workspace",
   "version": "0.2.0",
-  "license": "Apache-2.0",
   "private": true,
-  "description": "Out-of-tree Remote Hosts compatibility plugins for DSH 0.1.2-rc.1",
+  "description": "DeepSeek Harness remote hosts plugins for DSH 0.1.5-rc.2 and 0.1.2-rc.1",
   "packageManager": "pnpm@11.19.0",
   "type": "module",
   "scripts": {
-    "build": "pnpm -r --if-present run build",
-    "test": "node --test tests/*.test.mjs",
-    "check": "pnpm run build && pnpm run test"
+    "build": "node tools/release-profile.mjs build",
+    "test": "node tools/release-profile.mjs test",
+    "test:legacy": "node --test tests/*.test.mjs",
+    "check:interface": "node tools/check-interface-boundary.mjs",
+    "check": "pnpm run check:interface && pnpm run test && pnpm run build"
   },
   "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.2",
+    "@deepseek-ai/dsh-atomic-write": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-home-paths": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-llm": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-web": "0.1.2-rc.1",
+    "@deepseek-ai/schemastery": "3.18.2",
     "tsdown": "0.22.2",
     "typescript": "^6.0.3",
-    "@deepseek-ai/cordis": "link:../dsh-core/vendor/cordis",
-    "@deepseek-ai/schemastery": "link:../dsh-core/vendor/schemastery",
-    "@deepseek-ai/dsh-atomic-write": "link:../dsh-core/packages/util/atomic-write",
-    "@deepseek-ai/dsh-home-paths": "link:../dsh-core/packages/util/home-paths"
-  }
+    "dsh-runtime-interface": "workspace:*"
+  },
+  "license": "Apache-2.0"
 }

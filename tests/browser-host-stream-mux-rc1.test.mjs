@@ -434,20 +434,20 @@ test('upgrade authenticates and enforces same origin before handing the socket t
     close() {},
   }
   const ctx = {
-    connection: { requestRejection: () => undefined },
+    authorizeRequest: () => undefined,
     webServer: { registerUpgrade(value) { route = value; return () => {} } },
   }
   const dispose = registerStreamMux(ctx, { openStream() { throw new Error('unused') } }, { webSocketServer })
   assert.equal(route.path, BROWSER_STREAM_PATH)
 
   const rejected = { destroyed: false, body: '', end(value) { this.body += value } }
-  ctx.connection.requestRejection = () => 401
+  ctx.authorizeRequest = () => 401
   await route.handler({ method: 'GET', headers: { host: 'browser.test', origin: 'https://browser.test' }, socket: { encrypted: true } }, rejected, new Uint8Array())
   assert.match(rejected.body, /^HTTP\/1\.1 401/)
   assert.equal(accepted, 0)
 
   const crossOrigin = { destroyed: false, body: '', end(value) { this.body += value } }
-  ctx.connection.requestRejection = () => undefined
+  ctx.authorizeRequest = () => undefined
   await route.handler({ method: 'GET', headers: { host: 'browser.test', origin: 'https://evil.test' }, socket: { encrypted: true } }, crossOrigin, new Uint8Array())
   assert.match(crossOrigin.body, /^HTTP\/1\.1 403/)
   assert.equal(accepted, 0)

@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 import {readFileSync,writeFileSync} from 'node:fs';
 import {pathToFileURL} from 'node:url';
+export const FORMAL_RC2_CLIENT_SHA256 = '383b9ef779366c13d818500b6488896328b189f156addbaa480c835e902edd5f';
 export function orderProjects(workspaces, byId, archivedIds) {
   const archived = new Set(archivedIds);
   return workspaces.map((workspace, index) => {
@@ -26,6 +27,11 @@ function onceInSection(source, startAnchor, endAnchor, anchor, value) {
 }
 export function patchProjectOrder(source) {
   const hash=createHash('sha256').update(source).digest('hex');
+  if (hash === FORMAL_RC2_CLIENT_SHA256) {
+    source=once(source,'function SessionTree(',orderProjects.toString()+'\n\t\tfunction SessionTree(');
+    source=once(source,'return workspaces.map((workspace) => {','return orderProjects(workspaces, list.byId, archivedSessionIds).map((workspace) => {');
+    return once(source,'}, [sessionOrderByAccount, workspaces]);','}, [sessionOrderByAccount, workspaces, list, archivedSessionIds]);');
+  }
   if (hash === 'e3a836eb9c4a2503a6e6b0dac4c161dc67ebe4c456f514130cc9c17b57551294') {
     source = onceInSection(
       source,

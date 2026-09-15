@@ -3,7 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { createCarrier } from './carrier.js'
 
 export const name = 'mobile-interactions-compat-rc1'
-export const inject = ['webServer', 'connection']
+export const inject = ['webServer', 'runtimeInterface']
 const message = (method, payload, rpcId = randomUUID()) => ({ type: 'server-request', rpcId, method, payload })
 
 export class InteractionBridge {
@@ -68,13 +68,17 @@ export class InteractionBridge {
 }
 
 export function apply(ctx) {
-  if (ctx.webServer.host !== '127.0.0.1') throw new Error('INTERACTIONS_REQUIRE_LOOPBACK')
+  const runtimeInterface = ctx?.runtimeInterface
+  const connection = runtimeInterface?.connection
+  const webServer = ctx?.webServer
+  if (!connection || typeof connection.requestRejection !== 'function' || typeof connection.authenticatedUrl !== 'function') throw new TypeError('runtimeInterface.connection is required')
+  if (webServer?.host !== '127.0.0.1') throw new Error('INTERACTIONS_REQUIRE_LOOPBACK')
   return ctx.effect(() => {
     const bridge = new InteractionBridge()
     const lifetime = new AbortController()
     ctx.provide('mobileInteractions', bridge)
-    const unregister = ctx.webServer.register({ kind: 'exact', path: '/api/respond', handler: async (req, res) => {
-      const rejection = ctx.connection.requestRejection(req)
+    const unregister = webServer.register({ kind: 'exact', path: '/api/respond', handler: async (req, res) => {
+      const rejection = connection.requestRejection(req)
       if (rejection !== undefined) { res.writeHead(rejection === 401 || rejection === 403 ? rejection : 503); res.end(); return }
       if (req.method !== 'POST') { res.writeHead(405); res.end(); return }
       try {
@@ -89,8 +93,8 @@ export function apply(ctx) {
       let lastFailure
       while (!lifetime.signal.aborted) {
         try {
-          const origin = `http://127.0.0.1:${ctx.webServer.port}`
-          const carrier = await createCarrier(origin, ctx.connection.authenticatedUrl(origin + '/'), WebSocket, lifetime.signal)
+          const origin = `http://127.0.0.1:${webServer.port}`
+          const carrier = await createCarrier(origin, connection.authenticatedUrl(origin + '/'), WebSocket, lifetime.signal)
           bridge.attach(payload => carrier.result(payload))
           for await (const frame of carrier.events()) {
             bridge.accept(frame)

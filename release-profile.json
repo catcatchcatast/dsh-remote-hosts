@@ -1,0 +1,41 @@
+{
+  "runtimeVersion": "0.1.5-rc.2",
+  "supportedRuntimeVersions": [
+    "0.1.2-rc.1",
+    "0.1.5-rc.2"
+  ],
+  "profile": "web-remote",
+  "candidatePort": 3180,
+  "productionPort": 3080,
+  "packageRoots": [
+    "runtime-interface",
+    "mobile-bootstrap-rc1",
+    "mobile-interactions-compat-rc1",
+    "mobile-controller-compat-rc1",
+    "mobile-session-sync-rc1",
+    "mobile-stream-compat-rc1",
+    "rc1-host-carriers",
+    "browser-host-hub-rc1",
+    "remote-hosts-settings-rc1",
+    "subscriptions-compat-rc1",
+    "model-menu-filter",
+    "ui-directory-picker-browse",
+    "ui-workspace-menu-compat-rc1"
+  ],
+  "testPatterns": [
+    "*rc1*.test.mjs",
+    "*project-order*.test.mjs",
+    "runtime-interface*.test.mjs",
+    "management-interface*.test.mjs",
+    "management-owner-binding.test.mjs",
+    "interface-*.test.mjs",
+    "official-runtime*.test.mjs",
+    "directory-*.test.mjs",
+    "remote-directory-values.test.mjs",
+    "mobile-tool-details-lazy.test.mjs",
+    "model-menu-filter.test.mjs",
+    "ui-workspace-session-menu.test.mjs",
+    "agent-operations-interface.test.mjs",
+    "mobile-assistant-stream-integration.test.mjs"
+  ]
+}

@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { dispatchSubagent, MOBILE_SUBAGENT_COMPAT_METHODS } from '../packages/mobile-controller-compat-rc1/src/subagents.js'
 
+
 function event(seq, text = `event-${seq}`) {
   return {
     type: 'event',
@@ -54,7 +55,7 @@ test('subagent history uses one child address and the follow cursor for paging, 
       calls.push(['map', records, options])
       return records.map(record => ({ event: record.event, view: 'mapped' }))
     },
-    sessionController: {
+    session: {
       follow(request, signal) {
         calls.push(['follow', request, signal])
         return iterator
@@ -95,7 +96,7 @@ test('subagent history preserves a one-shot address for follow and page', async 
   })()
   const value = await dispatchSubagent({
     mobileHistoryMapper: records => records.map(record => record.event),
-    sessionController: {
+    session: {
       follow(request) { calls.push(['follow', request]); return source },
       page(request) { calls.push(['page', request]); return { records: [], hasMore: false } },
     },

@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import test from 'node:test'
+import { createRuntimeInterface, upstreamToCanonicalWire } from 'dsh-runtime-interface'
 import {
   MOBILE_CONTROLLER_COMPAT_METHODS,
   MOBILE_CONTROLLER_COMPAT_PATHS,
@@ -73,6 +74,31 @@ function baseline(value) {
   })()
 }
 
+function canonicalHistoryRecords(records) {
+  return upstreamToCanonicalWire(
+    { records },
+    { upstreamVersion: '0.1.2-rc.1', endpoint: 'session/page' },
+  ).records
+}
+
+function runtimeSessionPort(sessionController) {
+  return createRuntimeInterface({
+    sessionController,
+    workspaceController: {},
+    connection: {},
+    subagents: {},
+  }).session
+}
+
+function runtimeWorkspacePort(workspaceController) {
+  return createRuntimeInterface({
+    sessionController: {},
+    workspaceController,
+    connection: {},
+    subagents: {},
+  }).workspace
+}
+
 function routeHarness(overrides = {}) {
   const routes = new Map()
   const authRequests = []
@@ -110,6 +136,20 @@ function routeHarness(overrides = {}) {
     insertSessionBefore: async () => ({ workspace: { workspaceId: 'w-1' } }),
     archiveSession: async () => ({ archivedSessionIds: ['s-1'] }),
   }
+  const connection = {
+    requestRejection(req) { authRequests.push(req); return overrides.rejection },
+    authenticatedUrl: value => value,
+  }
+  const subagents = { remoteExportList: async () => ({ entries: [], parentAvailable: false }) }
+  const runtimeInterface = createRuntimeInterface({
+    upstreamVersion: overrides.upstreamVersion,
+    sessionController,
+    workspaceController,
+    connection,
+    subagents,
+    agentPresets: overrides.agentPresets,
+    goals: overrides.goals,
+  })
   const ctx = {
     webServer: {
       register(route) {
@@ -118,12 +158,7 @@ function routeHarness(overrides = {}) {
       },
     },
     effect(register) { return register() },
-    connection: {
-      requestRejection(req) { authRequests.push(req); return overrides.rejection },
-    },
-    sessionController,
-    workspaceController,
-    subagents: { remoteExportList: async () => ({ entries: [], parentAvailable: false }) },
+    runtimeInterface,
     directoryPickerController: {
       list: async path => ({ path: path ?? '/home', entries: [] }),
       createDirectory: async (path, name) => `${path}/${name}`,
@@ -165,12 +200,13 @@ test('official history rows expand without rewriting sequence and preserve views
       },
     },
   ]
-  const entries = mapHistoryRecords(records, { throughSeq: 6 })
+  const canonicalRecords = canonicalHistoryRecords(records)
+  const entries = mapHistoryRecords(canonicalRecords, { throughSeq: 6 })
   assert.deepEqual(entries.map(item => item.event.seq), [4, 5, 6])
   assert.deepEqual(entries.map(item => item.event.time), [40, 50, 53])
   assert.deepEqual(entries[0].view, { marker: 'v' })
   assert.equal(entries[1].event.data.chunk.type, 'text-delta')
-  assert.deepEqual(decodeHistoryRecords(records, 6).map(item => item.event.seq), [4, 5, 6])
+  assert.deepEqual(decodeHistoryRecords(canonicalRecords, 6).map(item => item.event.seq), [4, 5, 6])
 })
 
 test('session.history pins follow cursor, pages beforeSeq, and closes the iterator', async () => {
@@ -193,7 +229,7 @@ test('session.history pins follow cursor, pages beforeSeq, and closes the iterat
     },
   }
   const signal = new AbortController().signal
-  const result = await readSessionHistory(controller, { sessionId: 's-1', beforeSeq: 8, maxMessages: 4 }, signal)
+  const result = await readSessionHistory(runtimeSessionPort(controller), { sessionId: 's-1', beforeSeq: 8, maxMessages: 4 }, signal)
   assert.deepEqual(result.events.map(item => item.event.seq), [4, 5])
   assert.equal(result.hasMore, false)
   assert.deepEqual(result.projections.values, { x: 1 })
@@ -214,7 +250,7 @@ test('workspace.list adapts the official follow baseline and closes it', async (
       [Symbol.asyncIterator]() { return this },
     }),
   }
-  const result = await readWorkspaceList(controller, new AbortController().signal)
+  const result = await readWorkspaceList(runtimeWorkspacePort(controller), new AbortController().signal)
   assert.deepEqual(result, { items: [{ workspaceId: 'w-1' }], archivedSessionIds: ['s-2'] })
   assert.equal(closed, true)
 })
@@ -241,7 +277,7 @@ test('session.history adopts a rejected next after cancellation without unhandle
   process.on('unhandledRejection', onUnhandled)
   try {
     await assert.rejects(
-      readSessionHistory(controller, { sessionId: 's-1' }, abort.signal),
+      readSessionHistory(runtimeSessionPort(controller), { sessionId: 's-1' }, abort.signal),
       error => error === cancellation,
     )
     await new Promise(resolve => setImmediate(resolve))
@@ -267,6 +303,17 @@ test('apply registers only exact business paths and authenticates every request'
   await denied.routes.get('/api/host.describe').handler(new MockRequest('{}'), deniedResponse)
   assert.equal(deniedResponse.statusCode, 401)
   assert.equal(denied.authRequests.length, 1)
+})
+
+test('host.describe reports the connected runtime through the interface for both supported versions', async () => {
+  for (const upstreamVersion of ['0.1.2-rc.1', '0.1.5-rc.2']) {
+    const harness = routeHarness({ upstreamVersion })
+    const host = await request(harness.routes.get('/api/host.describe'), 'host.describe', {})
+    assert.equal(host.res.statusCode, 200)
+    assert.equal(host.envelope.result.ok, true)
+    assert.equal(host.envelope.result.value.version, upstreamVersion)
+    assert.equal(host.envelope.result.value.attachedSessions, 1)
+  }
 })
 
 test('legacy payloads map to official controller calls, including prompt requestId', async () => {

@@ -1,0 +1,51 @@
+{
+  "name": "dsh-remote-hosts-settings-rc1",
+  "version": "0.1.0-rc.1",
+  "description": "Settings page for rc1 remote hosts: status, add host, retry, disconnect, restart",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "license": "Apache-2.0",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "dsh-runtime-interface",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "tsdown --config tsdown.config.mjs",
+    "test": "node --test ../../tests/remote-hosts-settings-rc1.test.mjs"
+  },
+  "dependencies": {
+    "dsh-rc1-host-carriers": "workspace:*",
+    "dsh-runtime-interface": "workspace:*"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.2",
+    "@deepseek-ai/dsh-client-connection": "0.1.2-rc.1 || 0.1.5-rc.2",
+    "@deepseek-ai/dsh-host-webserver": "0.1.2-rc.1 || 0.1.5-rc.2"
+  },
+  "devDependencies": {
+    "@types/react": "~18.3.1",
+    "react": "18.3.1",
+    "tsdown": "0.22.2"
+  }
+}

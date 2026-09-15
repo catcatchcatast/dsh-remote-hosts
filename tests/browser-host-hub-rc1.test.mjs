@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import vm from 'node:vm'
+import { canonicalToBrowserWire, wrapHostCarrier } from 'dsh-runtime-interface'
 import {
   BROWSER_BFF_API_PREFIX,
   BROWSER_BOOTSTRAP_PATH,
@@ -415,7 +416,7 @@ test('$events strips the browser Host selector before opening the official Host 
   await stream.return()
 })
 
-test('session follow/page decode composite request IDs and preserve all record payloads', async () => {
+test('session follow/page decode composite request IDs and preserve opaque record payload objects after wire normalization', async () => {
   const records = [{ seq: 1, type: 'assistant/message', data: { sessionId: 'raw-inside-data', content: [{ id: 'opaque' }] } }]
   const projections = { asOfSeq: 1, values: { custom: { content: [{ id: 'opaque' }] } } }
   const alpha = carrierFor('alpha', {
@@ -431,12 +432,57 @@ test('session follow/page decode composite request IDs and preserve all record p
   const snapshot = (await stream.next()).value
   assert.equal(snapshot.header.id, encodeCompositeId('alpha', 'session-a'))
   assert.equal(snapshot.header.parentSession, encodeCompositeId('alpha', 'parent-a'))
-  assert.strictEqual(snapshot.records, records)
+  assert.notStrictEqual(snapshot.records, records)
+  assert.strictEqual(snapshot.records[0].data, records[0].data)
   assert.strictEqual(snapshot.projections, projections)
   await stream.return()
   const page = await hub.call('session/page', { args: { request: { address: { kind: 'session', sessionId: encodeCompositeId('alpha', 'session-a') }, throughSeq: 1 } } })
-  assert.strictEqual(page.value.records, records)
+  assert.notStrictEqual(page.value.records, records)
+  assert.strictEqual(page.value.records[0].data, records[0].data)
   assert.deepEqual(alpha.calls.at(-1).payload.args.request.address, { kind: 'session', sessionId: 'session-a' })
+})
+
+test('an explicit 0.1.2 Host maps packed history through the runtime interface before Browser delivery', async () => {
+  const alpha = carrierFor('alpha', {
+    'session/page': {
+      ok: true,
+      value: {
+        records: [
+          { type: 'chunks', event: { type: 'chunkrow/text-chunks', seq: 1, time: 10, data: { turn: 1, step: 1, index: 0, dt: [2], texts: ['a', 'b'] } } },
+          { type: 'event', event: { type: 'assistant/message', seq: 3, time: 20, data: { turn: 1, step: 1, message: { id: 'm', role: 'assistant', content: [] } }, sourceEventSeqs: [1, 2], surfaceOp: 'append' } },
+        ],
+        hasMore: false,
+      },
+    },
+  })
+  const hub = new BrowserHostHub({ perHost: { alpha: { carrier: alpha, upstreamVersion: '0.1.2-rc.1' } }, selectedHost: 'alpha' })
+  const page = await hub.call('session/page', { args: { request: { address: { kind: 'session', sessionId: encodeCompositeId('alpha', 'session-a') }, throughSeq: 3 } } })
+  assert.equal(page.ok, true)
+  assert.equal(page.value.records.length, 3)
+  assert.equal(page.value.records[0].event.type, 'assistant/chunk')
+  assert.equal(page.value.records[0].event.sourceSeq, undefined)
+  assert.equal(page.value.records[2].event.data.stream, undefined)
+  assert.deepEqual(page.value.records[2].event.sourceEventSeqs, [1, 2])
+})
+
+test('Browser encodes canonical history for its configured local version only', async () => {
+  const alpha = carrierFor('alpha', {
+    'session/page': { ok: true, value: {
+      header: { id: 's', seedLength: 1 },
+      records: [{ type: 'chunks', event: { type: 'chunkrow/text-chunks', seq: 1, time: 10, data: { turn: 1, step: 1, index: 0, dt: [], texts: ['x'] } } }],
+      hasMore: false,
+    } },
+  })
+  const oldHub = new BrowserHostHub({ perHost: { alpha: { carrier: alpha, upstreamVersion: '0.1.2-rc.1' } }, selectedHost: 'alpha', browserVersion: '0.1.2-rc.1' })
+  const oldPage = await oldHub.call('session/page', { args: { request: { address: { kind: 'session', sessionId: encodeCompositeId('alpha', 's') }, throughSeq: 1 } } })
+  assert.equal(oldPage.value.header.isSeeded, undefined)
+  assert.equal(oldPage.value.header.seedLength, 1)
+  assert.equal(oldPage.value.records[0].event.type, 'assistant/chunk')
+  const currentHub = new BrowserHostHub({ perHost: { alpha: { carrier: alpha, upstreamVersion: '0.1.2-rc.1' } }, selectedHost: 'alpha', browserVersion: '0.1.5-rc.2' })
+  const currentPage = await currentHub.call('session/page', { args: { request: { address: { kind: 'session', sessionId: encodeCompositeId('alpha', 's') }, throughSeq: 1 } } })
+  assert.equal(currentPage.value.header.seedLength, undefined)
+  assert.equal(currentPage.value.header.isSeeded, true)
+  assert.equal(currentPage.value.records.some(record => record.type === 'chunks'), false)
 })
 
 test('session follow fails once when the carrier throws before its first snapshot', async () => {
@@ -978,7 +1024,7 @@ test('BFF registers auth-gated exact routes and emits the official response enve
       register(route) { registered.push(route); return () => { route.removed = true } },
       registerUpgrade(route) { upgrades.push(route); return () => { route.removed = true } },
     },
-    connection: { requestRejection() { authCalls++; return undefined } }
+    authorizeRequest() { authCalls++; return undefined }
   }
   const alpha = carrierFor('alpha', { 'session/list': { ok: true, value: { items: [{ sessionId: 's-a', updatedAt: 1, running: false, blank: true }] } } })
   const hub = new BrowserHostHub({ perHost: { alpha } })
@@ -1021,7 +1067,7 @@ test('BFF stream route writes SSE frames and aborts on the browser response clos
     write(chunk) { this.body += chunk; queueMicrotask(() => this.emit('close')) }
     end(chunk = '') { this.body += chunk; this.writableEnded = true }
   }
-  const ctx = { connection: { requestRejection: () => undefined } }
+  const ctx = { authorizeRequest: () => undefined }
   const alpha = carrierFor('alpha', {}, {
     'workspace/follow': ({ signal }) => framesOf([{ type: 'baseline', value: { items: [], archivedSessionIds: [] } }], { signal })
   })
@@ -1045,7 +1091,8 @@ test('apply keeps Node global transport untouched and injects browser bootstrap 
       register(route) { registered.push(route); return () => {} },
       registerUpgrade(route) { registered.push(route); return () => {} },
     },
-    connection: { requestRejection: () => undefined },
+    authorizeRequest: () => undefined,
+    runtimeInterface: { connection: { requestRejection: () => undefined }, wrapHostCarrier, encodeBrowser: (value, version) => canonicalToBrowserWire(value, version), browserVersion: '0.1.2-rc.1', upstreamVersion: '0.1.2-rc.1' },
     perHost: { alpha: carrierFor('alpha') },
     on(event, listener, options) { injections.push({ event, listener, options }); return () => {} },
     effect(register) { return register() }
@@ -1153,6 +1200,48 @@ test('bootstrap directly forwards known subscription channels without Host decor
   assert.throws(() => sandbox.__DSH_TRANSPORT__.fetch('/api/not-allowlisted', { method: 'POST', body: '{}' }), /not allowlisted/)
   assert.throws(() => sandbox.__DSH_TRANSPORT__.fetch('/codex-subscription/status', { method: 'GET', body: '{}' }), /requires POST/)
   assert.throws(() => sandbox.__DSH_TRANSPORT__.fetch('/subscriptions-auth/status', { method: 'POST', body: JSON.stringify({ type: 'client-request', rpcId: 'rpc', method: 'other', payload: {} }) }), /invalid subscription client-request envelope/)
+})
+
+test('bootstrap directly forwards the local management RPC without selected Host routing', async () => {
+  const calls = []
+  const sandbox = {
+    location: { href: 'https://browser.test/', origin: 'https://browser.test' },
+    console,
+    URL,
+    TextEncoder,
+    TextDecoder,
+    Uint8Array,
+    WebSocket: BootstrapSocket,
+    fetch: async (input, init) => {
+      calls.push({ input, init })
+      return { ok: true, status: 200 }
+    }
+  }
+  sandbox.globalThis = sandbox
+  vm.runInNewContext(createBrowserBootstrapScript(), sandbox)
+  sandbox.__DSH_BROWSER_HOST_HUB__.setSelectedHost('beta')
+  const input = new URL('/remote-hosts/status', sandbox.location.href)
+  const init = {
+    method: 'POST',
+    body: JSON.stringify({ type: 'client-request', rpcId: 'management-rpc', method: 'status', payload: {} })
+  }
+
+  await sandbox.__DSH_TRANSPORT__.fetch(input, init)
+  assert.strictEqual(calls[0].input, input)
+  assert.strictEqual(calls[0].init, init)
+  assert.deepEqual(JSON.parse(calls[0].init.body), { type: 'client-request', rpcId: 'management-rpc', method: 'status', payload: {} })
+  assert.equal(JSON.parse(calls[0].init.body).payload.__hostId, undefined)
+  assert.equal(calls.length, 1)
+
+  await sandbox.__DSH_TRANSPORT__.fetch('/remote-hosts/not-registered', {
+    method: 'POST',
+    body: JSON.stringify({ type: 'client-request', rpcId: 'management-unknown', method: 'not-registered', payload: {} })
+  })
+  assert.equal(calls.length, 2)
+  assert.equal(new URL(String(calls[1].input), sandbox.location.href).pathname, '/remote-hosts/not-registered')
+  assert.throws(() => sandbox.__DSH_TRANSPORT__.fetch('/remote-hosts/status', { method: 'GET', body: '{}' }), /management transport requires POST/)
+  assert.throws(() => sandbox.__DSH_TRANSPORT__.fetch('/remote-hosts/status', { method: 'POST', body: JSON.stringify({ type: 'client-request', rpcId: 'management-bad', method: 'other', payload: {} }) }), /invalid management client-request envelope/)
+  assert.throws(() => sandbox.__DSH_TRANSPORT__.fetch('/remote-hosts-fake/status', { method: 'POST', body: '{}' }), /transport path is not allowed/)
 })
 
 test('bootstrap openStream stays live until its multiplexed stream reaches a terminal frame', async () => {

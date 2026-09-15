@@ -1,0 +1,9 @@
+- id: connection
+  inject:
+    - webRuntime
+    - webServer
+- insert:
+    - id: runtime-interface
+      name: dsh-runtime-interface
+      config:
+        upstreamVersion: '0.1.2-rc.1'

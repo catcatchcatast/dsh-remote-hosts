@@ -270,7 +270,7 @@ export function serveStreamSocket(socket, hub, options = {}) {
   socket.on('message', raw => {
     if (!open) return
     let message
-    try { message = JSON.parse(typeof raw === 'string' ? raw : Buffer.from(raw).toString('utf8')) } catch {
+    try { message = decodeBrowserStreamFrame(typeof raw === 'string' ? raw : Buffer.from(raw).toString('utf8')) } catch {
       try { socket.close?.(1008, 'invalid stream protocol') } finally { failSocket() }
       return
     }
@@ -305,7 +305,7 @@ function sameOrigin(request) {
 /** Register the authenticated, same-origin WebSocket upgrade route. */
 export function registerStreamMux(ctx, hub, options = {}) {
   if (!ctx?.webServer || typeof ctx.webServer.registerUpgrade !== 'function') throw new TypeError('webServer.registerUpgrade is required')
-  if (!ctx?.connection || typeof ctx.connection.requestRejection !== 'function') throw new TypeError('connection.requestRejection is required')
+  if (typeof ctx?.authorizeRequest !== 'function') throw new TypeError('interface authorization port is required')
   const maxFrameBytes = positiveLimit(options.maxFrameBytes ?? options.maxResponseBytes, DEFAULT_MAX_FRAME_BYTES)
   const streamOptions = {
     maxFrameBytes,
@@ -321,7 +321,7 @@ export function registerStreamMux(ctx, hub, options = {}) {
     path: options.streamPath ?? BROWSER_STREAM_PATH,
     async handler(request, socket, head) {
       let rejection
-      try { rejection = await ctx.connection.requestRejection(request) } catch { rejection = 503 }
+      try { rejection = await ctx.authorizeRequest(request) } catch { rejection = 503 }
       if (rejection !== undefined) {
         rejectUpgrade(socket, rejection === 401 || rejection === 403 ? rejection : 503, rejection === 401 ? 'unauthorized' : rejection === 403 ? 'forbidden' : 'service unavailable')
         return
@@ -343,3 +343,4 @@ export function registerStreamMux(ctx, hub, options = {}) {
     try { webSocketServer.close() } catch { /* injected test servers may already be closed */ }
   }
 }
+import { decodeBrowserStreamFrame } from 'dsh-runtime-interface/browser'

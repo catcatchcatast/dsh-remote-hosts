@@ -3,20 +3,18 @@
  * 0.1.2-rc.1 controller faces. The sibling mobile-session-sync-rc1 package
  * owns the v2 HTTP routes; this adapter registers additive v3 and legacy SSE
  * routes while reusing the bounded v2 projection/paging semantics. It
- * deliberately does not depend on the removed legacy proxy layer or on an
+ * deliberately does not depend on the removed rc.8 proxy layer or on an
  * implicit/current Host selection.
  *
  */
 
 import { randomUUID } from 'node:crypto'
+import { canonicalToMobileHistoryEvent } from 'dsh-runtime-interface'
 
 const name = 'mobile-stream-compat-rc1'
 const inject = [
   'webServer',
-  'connection',
-  'sessionController',
-  'workspaceController',
-  'subagents',
+  'runtimeInterface',
   'mobileInteractions',
 ]
 
@@ -90,6 +88,26 @@ const Config = Object.freeze({
   },
 })
 
+function runtimeOf(ctx) {
+  const runtime = ctx?.runtimeInterface
+  if (!runtime || typeof runtime !== 'object'
+      || !runtime.session || !runtime.workspace || !runtime.subagents || !runtime.connection
+      || typeof runtime.decodeMobileIngress !== 'function' || typeof runtime.bindEventSource !== 'function') {
+    throw new TypeError('runtimeInterface is required')
+  }
+  return runtime
+}
+
+function runtimeSource(runtime, eventSource) {
+  return Object.freeze({
+    runtime,
+    session: runtime.session,
+    workspace: runtime.workspace,
+    subagents: runtime.subagents,
+    eventSource,
+  })
+}
+
 /** Read later events from one fixed rc1 follow snapshot and bounded pages. */
 async function readSessionDelta(controllerOrContext, request, options, signal, state) {
   const effectiveSignal = signal ?? (isAbortSignal(options) ? options : undefined) ?? new AbortController().signal
@@ -104,9 +122,9 @@ async function readSessionDelta(controllerOrContext, request, options, signal, s
 }
 
 async function readSessionDeltaCore(controllerOrContext, request, options, signal, state) {
-  const controller = controllerOrContext?.sessionController ?? controllerOrContext
+  const controller = controllerOrContext?.session ?? controllerOrContext
   if (!controller || typeof controller.follow !== 'function' || typeof controller.page !== 'function') {
-    throw new TypeError('sessionController with follow and page is required')
+    throw new TypeError('runtimeInterface.session with follow and page is required')
   }
 
   const effectiveSignal = signal ?? (isAbortSignal(options) ? options : undefined) ?? new AbortController().signal
@@ -272,23 +290,23 @@ async function readSessionDeltaCore(controllerOrContext, request, options, signa
  * opening cursor, so no phone clock or moving tail is trusted.
  */
 async function readSessionSyncSnapshot(first, second, third) {
-  const { sessionController, workspaceController, subagents, signal, readOptions } = normalizeSnapshotArgs(first, second, third)
-  if (!sessionController || typeof sessionController.list !== 'function') {
-    throw new TypeError('sessionController with list is required')
+  const { session, workspace, subagents, signal, readOptions } = normalizeSnapshotArgs(first, second, third)
+  if (!session || typeof session.list !== 'function') {
+    throw new TypeError('runtimeInterface.session with list is required')
   }
-  if (!workspaceController || typeof workspaceController.follow !== 'function') {
-    throw new TypeError('workspaceController with follow is required')
+  if (!workspace || typeof workspace.follow !== 'function') {
+    throw new TypeError('runtimeInterface.workspace with follow is required')
   }
   const effectiveSignal = signal ?? new AbortController().signal
   throwIfAborted(effectiveSignal)
 
   const snapshotId = randomUUID()
   let listed
-  let workspace
+  let workspaceBaseline
   try {
-    ;[listed, workspace] = await Promise.all([
-      raceAbort(Promise.resolve(sessionController.list({}, effectiveSignal)), effectiveSignal),
-      readWorkspaceBaseline(workspaceController, effectiveSignal),
+    ;[listed, workspaceBaseline] = await Promise.all([
+      raceAbort(Promise.resolve(session.list({}, effectiveSignal)), effectiveSignal),
+      readWorkspaceBaseline(workspace, effectiveSignal),
     ])
   } catch (error) {
     throwOrReturnCancellation(error, effectiveSignal)
@@ -303,17 +321,17 @@ async function readSessionSyncSnapshot(first, second, third) {
     return failureResult(error)
   }
   if (!listValue || !Array.isArray(listValue.items)) {
-    return failureResult(new Error('sessionController.list returned an invalid value'))
+    return failureResult(new Error('runtimeInterface.session.list returned an invalid value'))
   }
   const watermarkIndex = readOptions?.watermarkIndex ?? (readOptions && typeof readOptions.getWatermark === 'function' ? readOptions : undefined)
   const addressSource = {
-    sessionController,
+    session,
     ...(subagents === undefined ? {} : { subagents }),
     ...(readOptions?.addressBook === undefined ? {} : { addressBook: readOptions.addressBook }),
   }
   const addressBook = addressBookFor(addressSource, watermarkIndex)
   addressBook?.registerSummaries(listValue.items)
-  const archived = new Set(Array.isArray(workspace.archivedSessionIds) ? workspace.archivedSessionIds : [])
+  const archived = new Set(Array.isArray(workspaceBaseline.archivedSessionIds) ? workspaceBaseline.archivedSessionIds : [])
   const sessions = []
   for (const summary of listValue.items) {
     if (!summary || typeof summary !== 'object' || typeof summary.sessionId !== 'string') continue
@@ -326,14 +344,14 @@ async function readSessionSyncSnapshot(first, second, third) {
       } else {
         sessions.push({ sessionId: summary.sessionId, unknown: true, pending: true, authoritative: false })
         if (typeof readOptions?.scheduleColdTail === 'function') readOptions.scheduleColdTail(summary.sessionId)
-        else watermarkIndex?.scheduleColdTail?.(sessionController, summary.sessionId)
+        else watermarkIndex?.scheduleColdTail?.(session, summary.sessionId)
       }
       continue
     }
     try {
       const address = await resolveSessionAddress(addressSource, summary.sessionId, watermarkIndex, effectiveSignal)
       const opening = await openSessionSnapshot(
-        sessionController,
+        session,
         address,
         1,
         effectiveSignal,
@@ -365,6 +383,8 @@ function apply(ctx, config = {}) {
   if (!ctx || !ctx.webServer || typeof ctx.webServer.register !== 'function') {
     throw new TypeError('webServer is required')
   }
+  const runtime = runtimeOf(ctx)
+  const source = runtimeSource(runtime, runtime.bindEventSource(ctx))
   const state = new MobileSessionSyncState({
     maxInlineBytes: resolved.v3MaxInlineBytes,
     maxDetailChunkBytes: resolved.v3MaxDetailChunkBytes,
@@ -374,7 +394,7 @@ function apply(ctx, config = {}) {
     maxSubscriberBytes: resolved.v3MaxSubscriberBytes,
     diagnostics: resolved.diagnostics,
   })
-  state.setAddressSource({ sessionController: ctx.sessionController, subagents: ctx.subagents })
+  state.setAddressSource(source)
   const options = {
     ...resolved,
     // The public config keeps the v3 prefix to avoid colliding with the
@@ -395,37 +415,37 @@ function apply(ctx, config = {}) {
     try {
       disposers.push(ctx.webServer.register({
         kind: 'exact', path: MOBILE_SESSION_V3_DESCRIBE_PATH,
-        handler: (req, res) => handleV3DescribeRequest(ctx, req, res, resolved.maxRequestBytes, state, options),
+        handler: (req, res) => handleV3DescribeRequest(source, req, res, resolved.maxRequestBytes, state, options),
       }))
       disposers.push(ctx.webServer.register({
         kind: 'exact', path: MOBILE_SESSION_V3_SNAPSHOT_PATH,
-        handler: (req, res) => handleV3SnapshotRequest(ctx, req, res, resolved.maxRequestBytes, state, options),
+        handler: (req, res) => handleV3SnapshotRequest(source, req, res, resolved.maxRequestBytes, state, options),
       }))
       disposers.push(ctx.webServer.register({
         kind: 'exact', path: MOBILE_SESSION_V3_DELTA_PATH,
-        handler: (req, res) => handleV3DeltaRequest(ctx, req, res, resolved.maxRequestBytes, state, options),
+        handler: (req, res) => handleV3DeltaRequest(source, req, res, resolved.maxRequestBytes, state, options),
       }))
       disposers.push(ctx.webServer.register({
         kind: 'exact', path: MOBILE_SESSION_V3_HISTORY_PATH,
-        handler: (req, res) => handleV3HistoryRequest(ctx, req, res, resolved.maxRequestBytes, state, options),
+        handler: (req, res) => handleV3HistoryRequest(source, req, res, resolved.maxRequestBytes, state, options),
       }))
       disposers.push(ctx.webServer.register({
         kind: 'exact', path: MOBILE_SESSION_V3_EVENTS_PATH,
-        handler: (req, res) => handleV3EventsRequest(ctx, req, res, state, options),
+        handler: (req, res) => handleV3EventsRequest(source, req, res, state, options),
       }))
       disposers.push(ctx.webServer.register({
         kind: 'exact', path: MOBILE_SESSION_V3_DETAILS_PATH,
-        handler: (req, res) => handleV3DetailsRequest(ctx, req, res, resolved.maxRequestBytes, state, options),
+        handler: (req, res) => handleV3DetailsRequest(source, req, res, resolved.maxRequestBytes, state, options),
       }))
       disposers.push(ctx.webServer.register({
         kind: 'exact', path: MOBILE_EVENTS_MUX_PATH,
-        handler: (req, res) => handleCompatEventsRequest(ctx, req, res, state, options, 'mux'),
+        handler: (req, res) => handleCompatEventsRequest(source, req, res, state, options, 'mux'),
       }))
       disposers.push(ctx.webServer.register({
         kind: 'exact', path: MOBILE_EVENTS_HOST_PATH,
-        handler: (req, res) => handleCompatEventsRequest(ctx, req, res, state, options, 'host'),
+        handler: (req, res) => handleCompatEventsRequest(source, req, res, state, options, 'host'),
       }))
-      statusDispose = installSessionStatusBridge(ctx, state)
+      statusDispose = installSessionStatusBridge(source.eventSource, state)
     } catch (error) {
       try { statusDispose?.() } catch { /* preserve the registration failure */ }
       for (const dispose of disposers.reverse()) {
@@ -438,12 +458,7 @@ function apply(ctx, config = {}) {
     ctx.provide('mobileSessionDiagnostics', () => state.getDiagnostics())
     const interactionSource = resolveInteractionSource(ctx, resolved)
     if (interactionSource) state.attachInteractions(interactionSource)
-    state.startBackground({
-      sessionController: ctx.sessionController,
-      workspaceController: ctx.workspaceController,
-      subagents: ctx.subagents,
-      eventSource: ctx,
-    }, options)
+    state.startBackground(source, options)
     return () => {
       try { statusDispose?.() } catch { /* preserve the first teardown */ }
       state.dispose()
@@ -457,8 +472,8 @@ function apply(ctx, config = {}) {
     : register()
 }
 
-function handleDescribeRequest(ctx, req, res, config) {
-  if (!authorizeHttpRequest(ctx, req, res, config.maxResponseBytes)) return
+function handleDescribeRequest(source, req, res, config) {
+  if (!authorizeHttpRequest(source, req, res, config.maxResponseBytes)) return
   if (req.method !== 'GET') {
     sendJson(res, 405, { error: 'method not allowed' }, config.maxResponseBytes)
     return
@@ -477,8 +492,8 @@ function handleDescribeRequest(ctx, req, res, config) {
   }, config.maxResponseBytes)
 }
 
-async function handleDeltaRequest(ctx, req, res, config) {
-  if (!authorizeHttpRequest(ctx, req, res, config.maxResponseBytes)) return
+async function handleDeltaRequest(source, req, res, config) {
+  if (!authorizeHttpRequest(source, req, res, config.maxResponseBytes)) return
   if (req.method !== 'POST') {
     sendJson(res, 405, { error: 'method not allowed' }, config.maxResponseBytes)
     return
@@ -487,13 +502,13 @@ async function handleDeltaRequest(ctx, req, res, config) {
     sendJson(res, 415, { error: 'content type must be application/json' }, config.maxResponseBytes)
     return
   }
-  await handleJsonRequest(ctx, req, res, config, 'mobile.sessionDelta', async (message, signal) => {
-    return readSessionDelta(ctx, message.payload, config, signal)
+  await handleJsonRequest(source, req, res, config, 'mobile.sessionDelta', async (ingress, signal) => {
+    return readSessionDelta(source, ingress.payload, config, signal)
   })
 }
 
-async function handleSnapshotRequest(ctx, req, res, config) {
-  if (!authorizeHttpRequest(ctx, req, res, config.maxResponseBytes)) return
+async function handleSnapshotRequest(source, req, res, config) {
+  if (!authorizeHttpRequest(source, req, res, config.maxResponseBytes)) return
   if (req.method !== 'POST') {
     sendJson(res, 405, { error: 'method not allowed' }, config.maxResponseBytes)
     return
@@ -502,23 +517,25 @@ async function handleSnapshotRequest(ctx, req, res, config) {
     sendJson(res, 415, { error: 'content type must be application/json' }, config.maxResponseBytes)
     return
   }
-  await handleJsonRequest(ctx, req, res, config, 'mobile.sessionSyncSnapshot', async (_message, signal) => {
-    return readSessionSyncSnapshot(ctx, signal)
+  await handleJsonRequest(source, req, res, config, 'mobile.sessionSyncSnapshot', async (_ingress, signal) => {
+    return readSessionSyncSnapshot(source, signal)
   })
 }
 
-async function handleJsonRequest(ctx, req, res, config, method, operation) {
+async function handleJsonRequest(source, req, res, config, method, operation) {
   const lifetime = createRequestLifetime(req, res, config.requestTimeoutMs)
   let rpcId = 'invalid'
   try {
     const body = await raceAbort(readBody(req, config.maxRequestBytes, lifetime.signal), lifetime.signal)
-    const message = JSON.parse(body)
-    rpcId = typeof message?.rpcId === 'string' && message.rpcId.length > 0 ? message.rpcId : 'invalid'
-    if (message?.type !== 'client-request' || message?.method !== method) {
-      sendJson(res, 400, serverFailure(rpcId, `invalid ${method} request`), config.maxResponseBytes)
-      return
-    }
-    const result = await operation(message, lifetime.signal)
+    const ingress = source.runtime.decodeMobileIngress({
+      route: method,
+      body,
+      headers: req.headers,
+      type: 'client-request',
+      method,
+    })
+    rpcId = ingress.rpcId
+    const result = await operation(ingress, lifetime.signal)
     if (lifetime.timedOut) {
       sendJson(res, 408, { error: 'request timeout' }, config.maxResponseBytes)
       return
@@ -542,12 +559,12 @@ async function handleJsonRequest(ctx, req, res, config, method, operation) {
   }
 }
 
-function authorizeHttpRequest(ctx, req, res, maxResponseBytes) {
+function authorizeHttpRequest(source, req, res, maxResponseBytes) {
   if (!isLoopback(req)) {
     sendJson(res, 403, { error: 'forbidden' }, maxResponseBytes)
     return false
   }
-  const connection = ctx.connection
+  const connection = source?.runtime?.connection
   if (!connection || typeof connection.requestRejection !== 'function') {
     sendJson(res, 503, { error: 'authentication unavailable' }, maxResponseBytes)
     return false
@@ -703,80 +720,19 @@ function decodeHistoryRecord(record) {
     throw new BaselineRecoveryError('unsupported-record')
   }
   if (record.type === 'event') {
-    const event = record.event
+    const event = canonicalEventForMobileStream(record.event)
     if (!event || typeof event !== 'object' || Array.isArray(event) || typeof event.type !== 'string') {
       throw new BaselineRecoveryError('unsupported-record')
     }
     if (!isSafeSequence(event.seq)) throw new BaselineRecoveryError('unsupported-record')
     return [{ event }]
   }
-  if (record.type !== 'chunks') throw new BaselineRecoveryError('unsupported-record')
-  return expandChunkRun(record.event)
+  throw new BaselineRecoveryError('unsupported-record')
 }
 
-/** Expand the exact rc1 SessionHistoryRecord chunk-row wire form. */
-function expandChunkRun(event) {
-  if (!event || typeof event !== 'object' || Array.isArray(event)
-      || typeof event.type !== 'string' || typeof event.seq !== 'number'
-      || typeof event.time !== 'number' || !event.data || typeof event.data !== 'object') {
-    throw new BaselineRecoveryError('unsupported-record')
-  }
-  const rowType = event.type
-  if (!['chunkrow/text-chunks', 'chunkrow/reasoning-chunks', 'chunkrow/tool-call-chunks'].includes(rowType)) {
-    throw new BaselineRecoveryError('unsupported-record')
-  }
-  if (!isSafeSequence(event.seq) || !Number.isSafeInteger(event.time)) {
-    throw new BaselineRecoveryError('unsupported-record')
-  }
-  const data = event.data
-  const isTool = rowType === 'chunkrow/tool-call-chunks'
-  const payload = isTool ? data.args : data.texts
-  if (!Array.isArray(payload) || payload.length === 0 || payload.some(item => typeof item !== 'string')) {
-    throw new BaselineRecoveryError('unsupported-record')
-  }
-  if (!Array.isArray(data.dt) || data.dt.length !== payload.length - 1
-      || data.dt.some(item => !Number.isSafeInteger(item))) {
-    throw new BaselineRecoveryError('unsupported-record')
-  }
-  if (typeof data.turn !== 'number' || typeof data.step !== 'number' || typeof data.index !== 'number') {
-    throw new BaselineRecoveryError('unsupported-record')
-  }
-  if (isTool && typeof data.id !== 'string') throw new BaselineRecoveryError('unsupported-record')
-  if (isTool && data.name !== undefined && typeof data.name !== 'string') {
-    throw new BaselineRecoveryError('unsupported-record')
-  }
-  const entries = []
-  let time = event.time
-  for (let index = 0; index < payload.length; index += 1) {
-    if (index > 0) time += data.dt[index - 1]
-    const seq = event.seq + index
-    if (!isSafeSequence(seq) || !Number.isSafeInteger(time)) {
-      throw new BaselineRecoveryError('unsupported-record')
-    }
-    let chunk
-    if (rowType === 'chunkrow/text-chunks') {
-      chunk = { type: 'text-delta', index: data.index, text: payload[index] }
-    } else if (rowType === 'chunkrow/reasoning-chunks') {
-      chunk = { type: 'reasoning-delta', index: data.index, text: payload[index] }
-    } else {
-      chunk = {
-        type: 'tool-call-delta',
-        index: data.index,
-        id: data.id,
-        ...(data.name === undefined ? {} : { name: data.name }),
-        argumentsDelta: payload[index],
-      }
-    }
-    entries.push({
-      event: {
-        type: 'assistant/chunk',
-        seq,
-        time,
-        data: { turn: data.turn, step: data.step, chunk },
-      },
-    })
-  }
-  return entries
+/** The runtime interface owns packed legacy rows; v3 receives canonical data. */
+function canonicalEventForMobileStream(event) {
+  return canonicalToMobileHistoryEvent(event)
 }
 
 function dedupeAndSort(entries, afterSeq, throughSeq) {
@@ -819,6 +775,13 @@ function failureResult(error) {
   }
 }
 
+function rpcErrorOf(result) {
+	const error = result?.error
+	if (error && typeof error === 'object' && !Array.isArray(error)
+		&& typeof error.code === 'string' && typeof error.message === 'string') return error
+	return safePublicError(error)
+}
+
 function successResult(value) {
   return { ok: true, value }
 }
@@ -836,12 +799,12 @@ function unwrapControllerValue(value) {
 }
 
 function normalizeSnapshotArgs(first, second, third) {
-	if (first?.sessionController && first?.workspaceController) {
-		if (isAbortSignal(second)) return { sessionController: first.sessionController, workspaceController: first.workspaceController, subagents: first.subagents, signal: second, readOptions: undefined }
-		return { sessionController: first.sessionController, workspaceController: first.workspaceController, subagents: first.subagents, signal: third, readOptions: second }
+	if (first?.session && first?.workspace) {
+		if (isAbortSignal(second)) return { session: first.session, workspace: first.workspace, subagents: first.subagents, signal: second, readOptions: undefined }
+		return { session: first.session, workspace: first.workspace, subagents: first.subagents, signal: third, readOptions: second }
 	}
-	if (second?.watermarkIndex || second?.scheduleColdTail) return { sessionController: first?.sessionController ?? first, workspaceController: first?.workspaceController, subagents: first?.subagents, signal: third, readOptions: second }
-	return { sessionController: first, workspaceController: second, subagents: undefined, signal: third, readOptions: undefined }
+	if (second?.watermarkIndex || second?.scheduleColdTail) return { session: first?.session ?? first, workspace: first?.workspace, subagents: first?.subagents, signal: third, readOptions: second }
+	return { session: first, workspace: second, subagents: undefined, signal: third, readOptions: undefined }
 }
 
 async function toAsyncIterator(value) {
@@ -1105,7 +1068,7 @@ function validateSessionAddress(address) {
  */
 class SessionAddressBook {
 	constructor(source = {}) {
-		this.sessionController = source.sessionController
+		this.session = source.session
 		this.subagents = source.subagents
 		this.summaries = new Map()
 		this.catalogs = new Map()
@@ -1138,15 +1101,21 @@ class SessionAddressBook {
 	}
 
 	async refresh(signal) {
-		if (typeof this.sessionController?.list !== 'function') return
+		if (typeof this.session?.list !== 'function') return
 		if (this.listLoad === undefined) {
 			const sharedSignal = new AbortController().signal
-			this.listLoad = Promise.resolve(this.sessionController.list({}, sharedSignal))
+			this.listLoad = Promise.resolve().then(() => this.session.list({}, sharedSignal))
 				.then((raw) => unwrapControllerValue(raw))
 				.then((value) => {
 					if (!value || !Array.isArray(value.items)) throw new SubagentAddressError('corrupt')
 					this.registerSummaries(value.items)
 					return value
+				})
+				.catch((error) => {
+					// 窄接口端口会暴露稳定方法面；旧官方控制器未提供 list 时，
+					// 仍可用本地 Session 地址继续，不把能力差异泄漏给业务。
+					if (error?.code === 'runtime-interface/capability-unavailable') return undefined
+					throw error
 				})
 				.finally(() => { this.listLoad = undefined })
 		}
@@ -1166,7 +1135,7 @@ class SessionAddressBook {
 		let load = this.catalogLoads.get(parentSessionId)
 		if (load === undefined) {
 			const sharedSignal = new AbortController().signal
-			load = Promise.resolve(this.subagents.remoteExportList(parentSessionId, sharedSignal))
+			load = Promise.resolve().then(() => this.subagents.remoteExportList(parentSessionId, sharedSignal))
 				.then((raw) => unwrapControllerValue(raw))
 				.then((value) => {
 					if (!value || !Array.isArray(value.entries) || typeof value.parentAvailable !== 'boolean') {
@@ -1231,17 +1200,17 @@ class SubagentAddressError extends Error {
 	}
 }
 
-function addressBookFor(controllerOrContext, state) {
-	const context = controllerOrContext && typeof controllerOrContext === 'object' ? controllerOrContext : {}
+function addressBookFor(sourceOrSession, state) {
+	const source = sourceOrSession && typeof sourceOrSession === 'object' ? sourceOrSession : {}
 	if (state?.addressBook !== undefined) return state.addressBook
-	const addressBook = ownDataProperty(context, 'addressBook')
+	const addressBook = ownDataProperty(source, 'addressBook')
 	if (addressBook !== undefined && typeof addressBook.resolve === 'function') return addressBook
-	const hasContext = context.sessionController !== undefined || context.subagents !== undefined
-	if (!hasContext) return undefined
-	const controller = context.sessionController ?? controllerOrContext
-	const subagents = context.subagents
-	if (controller === undefined && subagents === undefined) return undefined
-	return new SessionAddressBook({ sessionController: controller, subagents })
+	const hasPorts = source.session !== undefined || source.subagents !== undefined
+	if (!hasPorts) return undefined
+	const session = source.session ?? sourceOrSession
+	const subagents = source.subagents
+	if (session === undefined && subagents === undefined) return undefined
+	return new SessionAddressBook({ session, subagents })
 }
 
 function ownDataProperty(source, key) {
@@ -1250,8 +1219,8 @@ function ownDataProperty(source, key) {
 	return descriptor && Object.hasOwn(descriptor, 'value') ? descriptor.value : undefined
 }
 
-async function resolveSessionAddress(controllerOrContext, sessionId, state, signal) {
-	const book = addressBookFor(controllerOrContext, state)
+async function resolveSessionAddress(sourceOrSession, sessionId, state, signal) {
+	const book = addressBookFor(sourceOrSession, state)
 	if (book === undefined) return { kind: 'session', sessionId }
 	return book.resolve(sessionId, signal)
 }
@@ -1434,6 +1403,17 @@ var MobileSessionSyncState = class {
 				}
 			}, { global: true });
 			if (typeof createdDispose === "function") disposers.push(createdDispose);
+			const assistantDispose = on("session/assistant-stream", (item) => {
+				const sessionId = item?.sessionId;
+				if (typeof sessionId !== 'string' || this.archivedSessions.has(sessionId)) return;
+				if (item.error) {
+					this.emitStreamError('assistant-stream', item.error, sessionId);
+					return;
+				}
+				this.emit(assistantStreamEvent(item));
+			}, { global: true });
+			if (typeof assistantDispose === 'function') disposers.push(assistantDispose);
+			this.assistantEventSource = source;
 			this.globalEventUnsubscribers = disposers;
 			this.globalEventsRunning = true;
 			return true;
@@ -1503,14 +1483,13 @@ var MobileSessionSyncState = class {
 		if (sessionId === undefined || sessionId.startsWith("rh1.")) return;
 		if (this.archivedSessions.has(sessionId)) return;
 		const sessionValue = asRecord(session);
-		if (typeof session?.snapshotEvents !== "function") return;
+		if (!Array.isArray(sessionValue?.events)) return;
 		const knownCursor = this.getWatermark(sessionId)?.lastSeq;
 		const firstLiveSeq = [sessionValue?.firstLiveSeq]
 			.find((candidate) => isSafeSequence(candidate));
 		const startSeq = knownCursor === undefined ? firstLiveSeq : knownCursor + 1;
 		if (!Number.isSafeInteger(startSeq) || startSeq < 0) return;
-		const snapshotEvents = session.snapshotEvents(startSeq);
-		if (!Array.isArray(snapshotEvents)) throw new TypeError("session.snapshotEvents must return an array");
+		const snapshotEvents = sessionValue.events;
 		for (const candidate of snapshotEvents) this.ingestGlobalSnapshotCandidate(sessionId, candidate, options, startSeq);
 	}
 	ingestGlobalSnapshotCandidate(sessionId, candidate, options, startSeq) {
@@ -1569,6 +1548,7 @@ var MobileSessionSyncState = class {
 	}
 	replaceArchivedSessions(value) {
 		this.archivedSessions = new Set(Array.isArray(value) ? value.filter((id) => typeof id === "string") : []);
+		for (const sessionId of this.archivedSessions) this.assistantEventSource?.discardAssistantSession?.(sessionId);
 	}
 	/** The conversion layer uses this bound to keep normal event bodies small. */
 	get maxInlineBytes() {
@@ -1671,21 +1651,21 @@ var MobileSessionSyncState = class {
 	 */
 	startBackground(source, options = {}) {
 		if (this.backgroundRunning) return;
-		const hasControllers = source !== null && typeof source === "object" && source.sessionController !== void 0;
-		const sessionController = hasControllers ? source.sessionController : source;
-		const workspaceController = hasControllers ? source.workspaceController : void 0;
-		const eventSource = hasControllers ? source.eventSource : undefined;
-		if (!sessionController && !(eventSource && typeof eventSource.on === "function")) return;
-		this.setAddressSource(hasControllers ? source : { sessionController });
+		const hasPorts = source !== null && typeof source === "object" && source.session !== void 0;
+		const session = hasPorts ? source.session : source;
+		const workspace = hasPorts ? source.workspace : void 0;
+		const eventSource = hasPorts ? source.eventSource : undefined;
+		if (!session && !(eventSource && typeof eventSource.on === "function")) return;
+		this.setAddressSource(hasPorts ? source : { session });
 		const controller = new AbortController();
 		this.backgroundAbort = controller;
 		this.muxAbort = controller;
 		this.backgroundRunning = true;
 		this.muxRunning = true;
-		this.workspaceBaselineReady = workspaceController && typeof workspaceController.follow === "function"
+		this.workspaceBaselineReady = workspace && typeof workspace.follow === "function"
 			? new Promise((resolve) => { this.workspaceBaselineResolve = resolve; })
 			: Promise.resolve();
-		this.workspaceBaselineKnown = !(workspaceController && typeof workspaceController.follow === "function");
+		this.workspaceBaselineKnown = !(workspace && typeof workspace.follow === "function");
 		const mergedOptions = {
 			...defaultV3Options(this),
 			...options,
@@ -1693,13 +1673,13 @@ var MobileSessionSyncState = class {
 			maxHistoryPages: options.maxHistoryPages ?? DEFAULT_V3_MAX_HISTORY_PAGES
 		};
 		this.installGlobalSessionBridge(eventSource, mergedOptions);
-		installDetailLoader({ sessionController, addressBook: this.addressBook }, this, mergedOptions);
+		installDetailLoader({ session, addressBook: this.addressBook }, this, mergedOptions);
 		const jobs = [
-			this.runSessionCatalog(sessionController, workspaceController, controller, mergedOptions),
-			this.runSessionControl(sessionController, controller, mergedOptions)
+			this.runSessionCatalog(session, workspace, controller, mergedOptions),
+			this.runSessionControl(session, controller, mergedOptions)
 		];
-		if (workspaceController && typeof workspaceController.follow === "function") {
-			jobs.push(this.runWorkspaceCatalog(sessionController, workspaceController, controller, mergedOptions));
+		if (workspace && typeof workspace.follow === "function") {
+			jobs.push(this.runWorkspaceCatalog(session, workspace, controller, mergedOptions));
 		}
 		for (const job of jobs) {
 			this.backgroundTasks.add(job);
@@ -1924,6 +1904,7 @@ var MobileSessionSyncState = class {
 	subscribe(options = {}) {
 		const subscriber = {
 			queue: [],
+			assistantBaselines: [],
 			seen: /* @__PURE__ */ new Set(),
 			seenOrder: [],
 			lastSeqBySession: /* @__PURE__ */ new Map(),
@@ -1942,6 +1923,11 @@ var MobileSessionSyncState = class {
 			if (frame.payload?.sessionId !== void 0 && options.sessionId !== void 0 && frame.payload.sessionId !== options.sessionId) continue;
 			this.enqueue(subscriber, event);
 		}
+		for (const item of this.assistantEventSource?.assistantSnapshots?.() ?? []) {
+			if (this.archivedSessions.has(item.sessionId) || (options.sessionId !== undefined && options.sessionId !== item.sessionId)) continue;
+			const event = assistantStreamEvent(item);
+			if (eventBelongsToChannel(event, options.channel)) subscriber.assistantBaselines.push(event);
+		}
 		if (this.globalBaselineRequired !== undefined) this.enqueue(subscriber, {
 			sessionId: "",
 			time: Date.now(),
@@ -1958,6 +1944,12 @@ var MobileSessionSyncState = class {
 		return { [Symbol.asyncIterator]() {
 			return {
 				next() {
+					if (!subscriber.done && subscriber.assistantBaselines.length > 0) {
+						const event = subscriber.assistantBaselines.shift();
+						// Feed reconnect baselines one by one, before the queued live suffix.
+						// A large attempt cannot overflow and terminate unrelated sessions' mux.
+						return Promise.resolve({ done: false, value: state.boundAssistantEvent(event) });
+					}
 					if (subscriber.queue.length > 0) return Promise.resolve({
 						done: false,
 						value: state.takeQueued(subscriber)
@@ -1991,6 +1983,7 @@ var MobileSessionSyncState = class {
 		} };
 	}
 	emit(event) {
+		if (event?.type === 'control/assistant-stream') event = this.boundAssistantEvent(event);
 		if (!eventBelongsToChannel(event, void 0)) return;
 		this.updatePendingControl(event);
 		for (const subscriber of this.subscribers) {
@@ -2000,6 +1993,11 @@ var MobileSessionSyncState = class {
 			if (event.seq !== void 0 && subscriber.sinceSeq !== void 0 && event.seq <= subscriber.sinceSeq) continue;
 			this.enqueue(subscriber, event);
 		}
+	}
+	boundAssistantEvent(event) {
+		if (Buffer.byteLength(JSON.stringify(event), 'utf8') <= this.options.maxSubscriberBytes) return event;
+		return { sessionId: event.sessionId, time: Date.now(), type: 'control/stream-error',
+			body: { failureKind: 'assistant-stream', action: 'open-session', source: 'assistant-stream-frame-limit' } };
 	}
 	scheduleColdTail(api, sessionId) {
 		if (this.getWatermark(sessionId)?.source === "mux" || this.coldPending.has(sessionId)) return;
@@ -2095,6 +2093,7 @@ var MobileSessionSyncState = class {
 	failSubscriber(subscriber) {
 		if (subscriber.done) return;
 		subscriber.queue.length = 0;
+		subscriber.assistantBaselines.length = 0;
 		subscriber.queuedBytes = 0;
 		subscriber.seen.clear();
 		subscriber.seenOrder.length = 0;
@@ -2123,6 +2122,7 @@ var MobileSessionSyncState = class {
 	closeSubscriber(subscriber) {
 		subscriber.done = true;
 		subscriber.queue.length = 0;
+		subscriber.assistantBaselines.length = 0;
 		subscriber.queuedBytes = 0;
 		subscriber.seen.clear();
 		subscriber.seenOrder.length = 0;
@@ -2163,16 +2163,21 @@ function resolveInteractionSource(ctx, config) {
 	}
   return candidate;
 }
-function installSessionStatusBridge(ctx, state) {
-	if (!ctx || typeof ctx.on !== "function") throw new TypeError("ctx.on is required for api-session/status bridge");
-	const dispose = ctx.on("api-session/status", (sessionId, running) => state.ingestSessionStatus(sessionId, running));
+function installSessionStatusBridge(eventSource, state) {
+	if (!eventSource || typeof eventSource.on !== "function") throw new TypeError("runtime event source is required for api-session/status bridge");
+	const dispose = eventSource.on("api-session/status", (sessionId, running) => state.ingestSessionStatus(sessionId, running));
 	return typeof dispose === "function" ? dispose : () => {};
 }
 function eventBelongsToChannel(event, channel) {
+	if (event?.type === 'control/assistant-stream') return channel === undefined || channel === 'mux';
 	const hasHostFrame = asRecord(event)?.hostFrame !== void 0;
 	if (channel === "host") return hasHostFrame;
 	if (channel === "v3" || channel === "mux") return !hasHostFrame;
 	return true;
+}
+function assistantStreamEvent(item) {
+	return { sessionId: item.sessionId, time: Date.now(), type: 'control/assistant-stream',
+		body: { frame: item.frame, historyEpoch: item.historyEpoch } };
 }
 /**
  * Convert the business bridge's explicit server-request frame to the Android
@@ -2299,7 +2304,7 @@ function waitWithAbort(milliseconds, signal) {
 	});
 }
 async function readSessionTailWatermark(controllerOrContext, sessionId, signal) {
-	const controller = controllerOrContext?.sessionController ?? controllerOrContext;
+	const controller = controllerOrContext?.session ?? controllerOrContext;
 	if (!controller || typeof controller.follow !== "function") return { kind: "unknown", reason: "controller-unavailable" };
 	try {
 		const effectiveSignal = signal ?? new AbortController().signal;
@@ -2312,7 +2317,7 @@ async function readSessionTailWatermark(controllerOrContext, sessionId, signal) 
 	}
 }
 function installDetailLoader(controllerOrContext, state, options) {
-	const controller = controllerOrContext?.sessionController ?? controllerOrContext;
+	const controller = controllerOrContext?.session ?? controllerOrContext;
 	state.setDetailLoader(async (sessionId, ref, signal) => {
 		if (!controller || typeof controller.page !== "function") return;
 		const effectiveSignal = signal ?? new AbortController().signal;
@@ -2949,28 +2954,24 @@ function safeCompactionFailure(value) {
 }
 /** Convert one durable history entry. This is also used for mux `session/event` frames. */
 function convertMobileHistoryEntry(entry, sessionId, state, options = defaultV3Options(state)) {
-	const raw = asRecord(entry.event) ?? {};
+	// Live global events and paged records use the same interface-owned conversion.
+	const raw = asRecord(canonicalToMobileHistoryEvent(entry.event)) ?? {};
 	const seq = raw.seq;
 	if (!isSafeSequence(seq)) throw new BaselineRecoveryError("unknown-sequence");
 	const time = integerValue(raw.time) ?? Date.now();
 	const type = boundedString(raw.type, 128) ?? "unknown";
+	const sourceSeq = integerValue(raw.sourceSeq);
 	const data = asRecord(raw.data) ?? {};
 	const body = {};
 	// Preserve the server's surface identity: text equality cannot identify a final chunk replacement.
 	if (["user/message", "assistant/message", "tool/result"].includes(type)) {
-		if (raw.sourceEventSeqs !== undefined) {
-			if (!Array.isArray(raw.sourceEventSeqs) || !raw.sourceEventSeqs.every(value => Number.isSafeInteger(value) && value >= 0)) {
-				throw new BaselineRecoveryError("unknown-source-sequence");
-			}
-			body.sourceEventSeqs = [...raw.sourceEventSeqs];
-		}
 		if (raw.surfaceOp === "append") body.surfaceOp = "append";
 		else if (raw.surfaceOp !== undefined) {
 			const op = asRecord(raw.surfaceOp);
-			if (op?.op !== "replace" || !Number.isSafeInteger(op.start) || !Number.isSafeInteger(op.end) || op.start < 0 || op.end < op.start) {
+			if (op?.op !== "replace" || !Number.isSafeInteger(op.startSeq) || !Number.isSafeInteger(op.endSeq) || op.startSeq < 0 || op.endSeq < op.startSeq) {
 				throw new BaselineRecoveryError("unknown-surface-operation");
 			}
-			body.surfaceOp = { op: "replace", start: op.start, end: op.end };
+			body.surfaceOp = { op: "replace", startSeq: op.startSeq, endSeq: op.endSeq };
 		}
 	}
 	switch (type) {
@@ -3122,6 +3123,7 @@ function convertMobileHistoryEntry(entry, sessionId, state, options = defaultV3O
 		case "subagent/update": {
 			for (const key of [
 				"agentId",
+				"childSessionId",
 				"name",
 				"status"
 			]) {
@@ -3240,6 +3242,7 @@ function convertMobileHistoryEntry(entry, sessionId, state, options = defaultV3O
 		case "turn/end":
 		case "step/start":
 		case "step/end":
+		case "assistant/attempt":
 		case "session/end-seed": {
 			for (const key of ["turn", "step"]) {
 				const number = integerValue(data[key]);
@@ -3272,7 +3275,8 @@ function convertMobileHistoryEntry(entry, sessionId, state, options = defaultV3O
 		sessionId,
 		seq,
 		time,
-		type
+		type,
+		...sourceSeq === void 0 ? {} : { sourceSeq }
 	};
 	if (Object.keys(body).length > 0) result.body = body;
 	return result;
@@ -3504,8 +3508,8 @@ async function readMobileV3History(controllerOrContext, request, state, options 
 
 async function readMobileV3HistoryCore(controllerOrContext, request, state, options = defaultV3Options(state), signal) {
   validateV3HistoryRequest(request, options);
-  const controller = controllerOrContext?.sessionController ?? controllerOrContext;
-  if (!controller || typeof controller.follow !== "function" || typeof controller.page !== "function") throw new TypeError("sessionController with follow and page is required");
+  const controller = controllerOrContext?.session ?? controllerOrContext;
+  if (!controller || typeof controller.follow !== "function" || typeof controller.page !== "function") throw new TypeError("runtimeInterface.session with follow and page is required");
   installDetailLoader(controllerOrContext, state, options);
 	const effectiveSignal = signal ?? (isAbortSignal(options) ? options : undefined) ?? new AbortController().signal;
 	throwIfAborted(effectiveSignal);
@@ -3547,6 +3551,7 @@ async function readMobileV3HistoryCore(controllerOrContext, request, state, opti
 		lastSeq: watermark?.lastSeq ?? opening.cursor,
 		lastSeqKnown: true,
 		...normalizedProjections === void 0 ? {} : { projections: normalizedProjections },
+		...(request.beforeSeq === undefined && opening.assistantStream !== undefined ? { assistantStream: opening.assistantStream } : {}),
 	} };
 }
 async function readMobileV3Delta(controllerOrContext, request, state, options = defaultV3Options(state), signal) {
@@ -3608,15 +3613,15 @@ async function readMobileV3Snapshot(controllerOrContext, state, signal) {
 }
 async function* readMobileV3Events(source, state, options = {}, signal) {
 	let backgroundSource = source;
-	if (source && typeof source === "object" && source.sessionController !== void 0) {
+	if (source && typeof source === "object" && source.session !== void 0) {
 		const addressBook = ownDataProperty(source, 'addressBook')
 		const configuredEventSource = ownDataProperty(source, 'eventSource')
 		const eventSource = configuredEventSource === undefined && typeof ownDataProperty(source, 'on') === 'function'
 			? source
 			: configuredEventSource
 		backgroundSource = {
-			sessionController: source.sessionController,
-			workspaceController: source.workspaceController,
+			session: source.session,
+			workspace: source.workspace,
 			subagents: source.subagents,
 			...(eventSource === undefined ? {} : { eventSource }),
 			...(addressBook === undefined ? {} : { addressBook }),
@@ -3704,23 +3709,6 @@ async function readMobileV3Details(state, request, options = defaultV3Options(st
 		}
 	};
 }
-function unwrapV3Message(message) {
-	const value = asRecord(message) ?? {};
-	if (value.type === "client-request" && asRecord(value.payload) !== void 0) {
-		const rpcId = stringValue(value.rpcId);
-		return {
-			...rpcId === void 0 ? {} : { rpcId },
-			payload: asRecord(value.payload)
-		};
-	}
-	const rpcId = stringValue(value.rpcId);
-	const payload = { ...value };
-	delete payload.rpcId;
-	return {
-		...rpcId === void 0 ? {} : { rpcId },
-		payload
-	};
-}
 function v3Failure(code, message, details = {}) {
 	return {
 		ok: false,
@@ -3731,6 +3719,52 @@ function v3Failure(code, message, details = {}) {
 		}
 	};
 }
+
+const V3_HISTORY_EPOCH_ERRORS = new Set(['history-epoch-required', 'history-epoch-mismatch', 'history-epoch-invalid'])
+
+/** Current runtimes advertise epoch metadata; legacy servers retain their v3 wire unchanged. */
+function v3HistoryMetadata(history) {
+	if (history?.historyEpochMode !== 'epoch' || typeof history.historyEpoch !== 'string' || history.historyEpoch.length === 0) return {}
+	return { historyEpoch: history.historyEpoch, historyEpochMode: 'epoch' }
+}
+
+function withV3HistoryMetadata(value, history) {
+	const metadata = v3HistoryMetadata(history)
+	return Object.keys(metadata).length === 0 ? value : { ...value, ...metadata }
+}
+
+function v3HistoryBaseline(sessionId, history) {
+	const metadata = v3HistoryMetadata(history)
+	if (Object.keys(metadata).length === 0) return undefined
+	return {
+		sessionId: sessionId ?? '',
+		type: 'control/history-baseline',
+		time: Date.now(),
+		body: { ...metadata, baselineRequired: false },
+		...metadata,
+	}
+}
+
+function publicV3Error(error) {
+	const code = typeof error?.code === 'string' ? error.code : undefined
+	if (code === 'history-epoch-required' || code === 'history-epoch-mismatch') {
+		const details = asRecord(error?.details)
+		const historyEpoch = boundedString(details?.historyEpoch, 512)
+		return {
+			code,
+			message: 'history baseline required',
+			details: { baselineRequired: true, ...(historyEpoch === undefined ? {} : { historyEpoch }) },
+		}
+	}
+	if (code === 'history-epoch-invalid') return { code, message: 'invalid history epoch', details: {} }
+	const safe = safePublicError(error)
+	return { code: safe.code, message: safe.message, details: safe.details ?? {} }
+}
+
+function v3ErrorStatus(error) {
+	return error.code === 'history-epoch-required' || error.code === 'history-epoch-mismatch' ? 409 : 400
+}
+
 function sendV3Result(res, status, rpcId, result, maxBytes) {
 	sendJson(res, status, rpcId === void 0 ? result : {
 		type: "server-response",
@@ -3741,16 +3775,18 @@ function sendV3Result(res, status, rpcId, result, maxBytes) {
 function parseUrl(req) {
 	return new URL(req.url ?? "/", "http://127.0.0.1");
 }
-function handleV3DescribeRequest(ctx, req, res, maxRequestBytes, state, options) {
-  if (!authorizeHttpRequest(ctx, req, res, options.maxResponseBytes)) return
+function handleV3DescribeRequest(source, req, res, maxRequestBytes, state, options) {
+  if (!authorizeHttpRequest(source, req, res, options.maxResponseBytes)) return
   if (req.method !== 'GET') return sendJson(res, 405, v3Failure('method-not-allowed', 'method not allowed'), options.maxResponseBytes)
   let diagnostics
   try {
     if (parseUrl(req).searchParams.get('diagnostics') === 'true') diagnostics = state?.getDiagnostics?.()
   } catch { /* an invalid query simply keeps diagnostics out of the response */ }
+  const runtimeDescription = source.runtime.describe()
   return sendJson(res, 200, {
     protocolVersion: MOBILE_SESSION_V3_PROTOCOL_VERSION,
     capability: MOBILE_SESSION_V3_CAPABILITY,
+    capabilities: [MOBILE_SESSION_V3_CAPABILITY, ...runtimeDescription.capabilities],
     compatibility: { v2: true, rc1Controllers: true },
     limits: {
       maxRequestBytes,
@@ -3771,61 +3807,68 @@ function handleV3DescribeRequest(ctx, req, res, maxRequestBytes, state, options)
       events: MOBILE_SESSION_V3_EVENTS_PATH,
       details: MOBILE_SESSION_V3_DETAILS_PATH,
     },
+    ...v3HistoryMetadata(runtimeDescription),
     ...(diagnostics === undefined ? {} : { diagnostics }),
   }, options.maxResponseBytes)
 }
-async function readV3JsonBody(req, maxRequestBytes, signal) {
-  const text = await readBody(req, maxRequestBytes, signal)
-  if (text.trim() === '') return { payload: {} }
-  return unwrapV3Message(JSON.parse(text))
+async function readV3Ingress(source, req, maxRequestBytes, signal, route, historyOperation) {
+  const body = await readBody(req, maxRequestBytes, signal)
+  return source.runtime.decodeMobileIngress({
+    route,
+    body,
+    headers: req.headers,
+    allowDirectPayload: true,
+    allowEmptyObject: true,
+    requirePayloadObject: true,
+    historyOperation,
+  })
 }
-async function handleV3JsonRequest(ctx, req, res, maxRequestBytes, options, operation) {
+async function handleV3JsonRequest(source, req, res, maxRequestBytes, options, { route, historyOperation }, operation) {
   const lifetime = createRequestLifetime(req, res, options.requestTimeoutMs)
   let rpcId
   try {
-    const message = await raceAbort(readV3JsonBody(req, maxRequestBytes, lifetime.signal), lifetime.signal)
-    rpcId = typeof message?.rpcId === 'string' && message.rpcId.length > 0 ? message.rpcId : undefined
-    const result = await operation(message?.payload ?? {}, lifetime.signal)
+    const ingress = await raceAbort(readV3Ingress(source, req, maxRequestBytes, lifetime.signal, route, historyOperation), lifetime.signal)
+    rpcId = ingress.rpcId === 'invalid' ? undefined : ingress.rpcId
+    const result = await operation(ingress.payload, lifetime.signal, ingress.history)
     if (lifetime.timedOut) return sendJson(res, 408, { error: 'request timeout' }, options.maxResponseBytes)
     if (lifetime.clientClosed) return
-    if (result?.ok === true) return sendV3Result(res, 200, rpcId, result.value, options.maxResponseBytes)
-    const error = result?.error ?? {}
-    const safe = safePublicError(error)
-    return sendV3Result(res, 400, rpcId, v3Failure(
-      safe.code,
-      safe.message,
-      safe.details ?? {},
-    ), options.maxResponseBytes)
+    if (result?.ok === true) return sendV3Result(res, 200, rpcId, withV3HistoryMetadata(result.value, ingress.history), options.maxResponseBytes)
+    const safe = publicV3Error(result?.error)
+    return sendV3Result(res, v3ErrorStatus(safe), rpcId, v3Failure(safe.code, safe.message, safe.details), options.maxResponseBytes)
   } catch (error) {
     if (lifetime.clientClosed) return
     if (lifetime.timedOut) return sendJson(res, 408, { error: 'request timeout' }, options.maxResponseBytes)
     if (error instanceof RequestTooLargeError) return sendJson(res, 413, { error: 'request body too large' }, options.maxResponseBytes)
     if (isAbortError(error)) return
-    return sendV3Result(res, 400, rpcId, v3Failure('bad-request', 'invalid request'), options.maxResponseBytes)
+    const safe = publicV3Error(error)
+    return sendV3Result(res, v3ErrorStatus(safe), rpcId, v3Failure(safe.code, safe.message, safe.details), options.maxResponseBytes)
   } finally {
     lifetime.dispose()
   }
 }
-async function handleV3SnapshotRequest(ctx, req, res, maxRequestBytes, state, options) {
-  if (!authorizeHttpRequest(ctx, req, res, options.maxResponseBytes)) return
+async function handleV3SnapshotRequest(source, req, res, maxRequestBytes, state, options) {
+  if (!authorizeHttpRequest(source, req, res, options.maxResponseBytes)) return
   if (req.method !== 'POST') return sendJson(res, 405, v3Failure('method-not-allowed', 'method not allowed'), options.maxResponseBytes)
   if (!isJsonContentType(req)) return sendJson(res, 415, v3Failure('unsupported-media-type', 'content type must be application/json'), options.maxResponseBytes)
-  return handleV3JsonRequest(ctx, req, res, maxRequestBytes, options, (_payload, signal) =>
-    readMobileV3Snapshot(ctx, state, signal))
+  return handleV3JsonRequest(source, req, res, maxRequestBytes, options, {
+    route: MOBILE_SESSION_V3_SNAPSHOT_PATH, historyOperation: 'snapshot',
+  }, (_payload, signal) => readMobileV3Snapshot(source, state, signal))
 }
-async function handleV3DeltaRequest(ctx, req, res, maxRequestBytes, state, options) {
-  if (!authorizeHttpRequest(ctx, req, res, options.maxResponseBytes)) return
+async function handleV3DeltaRequest(source, req, res, maxRequestBytes, state, options) {
+  if (!authorizeHttpRequest(source, req, res, options.maxResponseBytes)) return
   if (req.method !== 'POST') return sendJson(res, 405, v3Failure('method-not-allowed', 'method not allowed'), options.maxResponseBytes)
   if (!isJsonContentType(req)) return sendJson(res, 415, v3Failure('unsupported-media-type', 'content type must be application/json'), options.maxResponseBytes)
-  return handleV3JsonRequest(ctx, req, res, maxRequestBytes, options, (payload, signal) =>
-    readMobileV3Delta(ctx, payload, state, options, signal))
+  return handleV3JsonRequest(source, req, res, maxRequestBytes, options, {
+    route: MOBILE_SESSION_V3_DELTA_PATH, historyOperation: 'delta',
+  }, (payload, signal) => readMobileV3Delta(source, payload, state, options, signal))
 }
-async function handleV3HistoryRequest(ctx, req, res, maxRequestBytes, state, options) {
-  if (!authorizeHttpRequest(ctx, req, res, options.maxResponseBytes)) return
+async function handleV3HistoryRequest(source, req, res, maxRequestBytes, state, options) {
+  if (!authorizeHttpRequest(source, req, res, options.maxResponseBytes)) return
   if (req.method !== 'POST') return sendJson(res, 405, v3Failure('method-not-allowed', 'method not allowed'), options.maxResponseBytes)
   if (!isJsonContentType(req)) return sendJson(res, 415, v3Failure('unsupported-media-type', 'content type must be application/json'), options.maxResponseBytes)
-  return handleV3JsonRequest(ctx, req, res, maxRequestBytes, options, (payload, signal) =>
-    readMobileV3History(ctx, payload, state, options, signal))
+  return handleV3JsonRequest(source, req, res, maxRequestBytes, options, {
+    route: MOBILE_SESSION_V3_HISTORY_PATH, historyOperation: 'history',
+  }, (payload, signal) => readMobileV3History(source, payload, state, options, signal))
 }
 function waitForV3Drain(res, signal) {
   if (signal.aborted || res.writableEnded || res.destroyed) return Promise.resolve(false)
@@ -3853,20 +3896,38 @@ async function writeV3SseFrame(res, event, signal) {
   if (typeof res.write !== 'function') return false
   return res.write(payload) || await waitForV3Drain(res, signal)
 }
-async function handleV3EventsRequest(ctx, req, res, state, options) {
-  if (!authorizeHttpRequest(ctx, req, res, options.maxResponseBytes)) return
+async function handleV3EventsRequest(source, req, res, state, options) {
+  if (!authorizeHttpRequest(source, req, res, options.maxResponseBytes)) return
   if (req.method !== 'GET') return sendJson(res, 405, v3Failure('method-not-allowed', 'method not allowed'), options.maxResponseBytes)
   let sessionId
   let sinceSeq
+  let historyEpoch
   try {
     const url = parseUrl(req)
     sessionId = url.searchParams.get('sessionId') ?? undefined
     const sinceRaw = url.searchParams.get('sinceSeq')
     sinceSeq = sinceRaw === null ? undefined : Number(sinceRaw)
+    historyEpoch = url.searchParams.get('historyEpoch') ?? undefined
     if (sessionId !== undefined) validateV3SessionId(sessionId)
     if (sinceSeq !== undefined && (!Number.isSafeInteger(sinceSeq) || sinceSeq < -1)) throw new TypeError('invalid sinceSeq')
   } catch {
     return sendJson(res, 400, v3Failure('bad-request', 'invalid events request'), options.maxResponseBytes)
+  }
+  let history
+  try {
+    const expectedHistoryEpoch = source.runtime.expectedHistoryEpoch({
+      headers: req.headers,
+      payload: {
+        ...(sessionId === undefined ? {} : { sessionId }),
+        ...(sinceSeq === undefined ? {} : { sinceSeq }),
+        ...(historyEpoch === undefined ? {} : { historyEpoch }),
+      },
+      operation: 'stream-resume',
+    })
+    history = source.runtime.assertHistoryEpoch(expectedHistoryEpoch)
+  } catch (error) {
+    const safe = publicV3Error(error)
+    return sendJson(res, v3ErrorStatus(safe), v3Failure(safe.code, safe.message, safe.details), options.maxResponseBytes)
   }
   res.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
@@ -3883,17 +3944,20 @@ async function handleV3EventsRequest(ctx, req, res, state, options) {
   req.once?.('close', onRequestClose)
   res.once?.('close', onRequestClose)
   try {
-    for await (const event of readMobileV3Events(ctx, state, {
+    const baseline = v3HistoryBaseline(sessionId, history)
+    if (baseline !== undefined && !await writeV3SseFrame(res, baseline, controller.signal)) return
+    for await (const event of readMobileV3Events(source, state, {
       channel: 'v3',
       ...(sessionId === undefined ? {} : { sessionId }),
       ...(sinceSeq === undefined ? {} : { sinceSeq }),
     }, controller.signal)) {
       if (controller.signal.aborted || res.writableEnded) break
-      if (!await writeV3SseFrame(res, event, controller.signal)) break
+      if (!await writeV3SseFrame(res, withV3HistoryMetadata(event, history), controller.signal)) break
     }
   } catch {
     if (!res.writableEnded && !controller.signal.aborted) await writeV3SseFrame(res, {
       sessionId: '', type: 'control/stream-error', time: Date.now(), body: { failureKind: 'stream-error' },
+      ...v3HistoryMetadata(history),
     }, controller.signal)
   } finally {
     req.removeListener?.('aborted', onRequestClose)
@@ -3902,12 +3966,14 @@ async function handleV3EventsRequest(ctx, req, res, state, options) {
     if (!res.writableEnded) res.end()
   }
 }
-async function handleV3DetailsRequest(ctx, req, res, maxRequestBytes, state, options) {
-  if (!authorizeHttpRequest(ctx, req, res, options.maxResponseBytes)) return
+async function handleV3DetailsRequest(source, req, res, maxRequestBytes, state, options) {
+  if (!authorizeHttpRequest(source, req, res, options.maxResponseBytes)) return
   if (req.method !== 'GET' && req.method !== 'POST') return sendJson(res, 405, v3Failure('method-not-allowed', 'method not allowed'), options.maxResponseBytes)
   if (req.method === 'POST') {
     if (!isJsonContentType(req)) return sendJson(res, 415, v3Failure('unsupported-media-type', 'content type must be application/json'), options.maxResponseBytes)
-    return handleV3JsonRequest(ctx, req, res, maxRequestBytes, options, (payload, signal) => readMobileV3Details(state, payload, options, signal))
+    return handleV3JsonRequest(source, req, res, maxRequestBytes, options, {
+      route: MOBILE_SESSION_V3_DETAILS_PATH, historyOperation: 'detail',
+    }, (payload, signal) => readMobileV3Details(state, payload, options, signal))
   }
   let lifetime
   try {
@@ -3919,16 +3985,20 @@ async function handleV3DetailsRequest(ctx, req, res, maxRequestBytes, state, opt
       ...(url.searchParams.get('field') === null ? {} : { field: url.searchParams.get('field') }),
       ...(url.searchParams.get('offset') === null ? {} : { offset: Number(url.searchParams.get('offset')) }),
       ...(url.searchParams.get('limit') === null ? {} : { limit: Number(url.searchParams.get('limit')) }),
+      ...(url.searchParams.get('historyEpoch') === null ? {} : { historyEpoch: url.searchParams.get('historyEpoch') }),
     }
     lifetime = createRequestLifetime(req, res, options.requestTimeoutMs)
+    const expectedHistoryEpoch = source.runtime.expectedHistoryEpoch({ headers: req.headers, payload, operation: 'detail' })
+    const history = source.runtime.assertHistoryEpoch(expectedHistoryEpoch)
     const result = await readMobileV3Details(state, payload, options, lifetime.signal)
     if (lifetime.timedOut) return sendJson(res, 408, { error: 'request timeout' }, options.maxResponseBytes)
     if (lifetime.clientClosed) return
-    return sendV3Result(res, result.ok ? 200 : 404, undefined, result.ok ? result.value : v3Failure('detail-not-found', 'detail unavailable'), options.maxResponseBytes)
+    return sendV3Result(res, result.ok ? 200 : 404, undefined, result.ok ? withV3HistoryMetadata(result.value, history) : v3Failure('detail-not-found', 'detail unavailable'), options.maxResponseBytes)
   } catch (error) {
     if (lifetime?.timedOut) return sendJson(res, 408, { error: 'request timeout' }, options.maxResponseBytes)
     if (lifetime?.clientClosed || isAbortError(error)) return
-    return sendJson(res, 400, v3Failure('bad-request', 'invalid detail request'), options.maxResponseBytes)
+    const safe = publicV3Error(error)
+    return sendJson(res, v3ErrorStatus(safe), v3Failure(safe.code, safe.message, safe.details), options.maxResponseBytes)
   } finally {
     lifetime?.dispose()
   }
@@ -3972,6 +4042,10 @@ function compatServerRequestFromEvent(event, kind) {
 	if (event?.serverRequest) return cloneJson(event.serverRequest)
   const body = controlBody(event ?? {})
   const sessionId = event?.sessionId ?? ''
+  if (event?.type === 'control/assistant-stream') return {
+    type: 'server-request', rpcId: `session-${sessionId}-assistant-${body.frame.revision}`, method: 'session/assistant-stream',
+    payload: { sessionId, historyEpoch: body.historyEpoch, frame: body.frame },
+  }
   if (event?.type === 'control/session-subscribed') return {
     type: 'server-request', rpcId: `session-${sessionId || 'unknown'}-subscribed`, method: 'session/subscribed',
     payload: { sessionId, lastSeq: body.lastSeq },
@@ -4003,9 +4077,9 @@ function compatServerRequestFromEvent(event, kind) {
     type: 'server-request', rpcId: `session-${sessionId}-${event.seq}`, method: 'session/event',
     payload: { sessionId, event: {
       type: event.type, seq: event.seq, time: event.time,
-      ...(body.sourceEventSeqs === undefined ? {} : { sourceEventSeqs: body.sourceEventSeqs }),
+      ...(event.sourceSeq === undefined ? {} : { sourceSeq: event.sourceSeq }),
       ...(body.surfaceOp === undefined ? {} : { surfaceOp: body.surfaceOp }),
-      data: Object.fromEntries(Object.entries(body).filter(([key]) => key !== 'sourceEventSeqs' && key !== 'surfaceOp')),
+      data: Object.fromEntries(Object.entries(body).filter(([key]) => key !== 'surfaceOp')),
     } },
   }
   return undefined

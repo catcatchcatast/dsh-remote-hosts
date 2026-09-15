@@ -1,11 +1,26 @@
 {
   "name": "dsh-mobile-interactions-compat-rc1",
   "version": "0.1.0-rc.1",
-  "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.js",
-  "exports": { ".": "./src/index.js", "./carrier": "./src/carrier.js", "./cordis.patch.yml": "./cordis.patch.yml", "./package.json": "./package.json" },
-  "files": ["src", "cordis.patch.yml"],
-  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
-  "dependencies": { "ws": "^8.18.0" }
+  "exports": {
+    ".": "./src/index.js",
+    "./carrier": "./src/carrier.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "dsh-runtime-interface": "workspace:*",
+    "ws": "^8.18.0"
+  },
+  "license": "Apache-2.0"
 }

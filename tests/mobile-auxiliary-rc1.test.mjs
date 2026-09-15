@@ -1,16 +1,27 @@
+/**
+ */
+
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createAgentOperations } from '../packages/runtime-interface/src/agent-operations.js'
 import { dispatchAuxiliary, MOBILE_AUXILIARY_COMPAT_METHODS } from '../packages/mobile-controller-compat-rc1/src/auxiliary.js'
+
 
 function context(calls, overrides = {}) {
   const agent = { id: 'session-1' }
-  return {
-    sessionController: {
-      async resolveAgent(sessionId) {
-        calls.push(['resolveAgent', sessionId])
-        return agent
-      },
+  const sessionController = {
+    async resolveAgent(sessionId) {
+      calls.push(['resolveAgent', sessionId])
+      return { agent }
     },
+  }
+  return {
+    agentOperations: createAgentOperations({
+      sessionController,
+      commands: overrides.commands,
+      goals: overrides.goals,
+      agentPresets: overrides.agentPresets,
+    }),
     ...overrides,
   }
 }
@@ -101,7 +112,7 @@ test('goal clear invokes the official clear method and returns the legacy receip
 
 test('unsupported or unavailable services fail explicitly instead of reporting success', async () => {
   await assert.rejects(
-    dispatchAuxiliary({ sessionController: { resolveAgent: async () => ({ id: 'session-1' }) } }, 'goal.create', {
+    dispatchAuxiliary({ agentOperations: createAgentOperations({ sessionController: { resolveAgent: async () => ({ id: 'session-1' }) } }) }, 'goal.create', {
       sessionId: 'session-1', objective: 'x',
     }),
     error => error.code === 'gateway/capability-unavailable',
@@ -114,7 +125,7 @@ test('unsupported or unavailable services fail explicitly instead of reporting s
 
 test('composite session ids are rejected before resolving an Agent', async () => {
   await assert.rejects(
-    dispatchAuxiliary({ sessionController: { resolveAgent() { throw new Error('must not resolve') } }, goals: { clear() {} } }, 'goal.clear', {
+    dispatchAuxiliary({ agentOperations: createAgentOperations({ sessionController: { resolveAgent() { throw new Error('must not resolve') } }, goals: { clear() {} } }) }, 'goal.clear', {
       sessionId: 'rh1.ubuntu.session-1', ref: { id: 'goal-1', revision: 1 },
     }),
     error => error.code === 'gateway/bad-request',

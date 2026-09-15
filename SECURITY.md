@@ -5,7 +5,7 @@
 | Version | Security reports accepted |
 | --- | --- |
 | DSH 0.1.2 Preview (`0.1.2-rc.1`) | Yes |
-| DSH 0.1.5 | Not supported; adaptation is in progress |
+| DSH 0.1.5-rc.2 source preview | Yes; public binaries pending |
 
 Please use GitHub private vulnerability reporting when available, or email
 `catcatchcatast@gmail.com`. Do not open a public issue containing tokens, keys,

@@ -110,7 +110,7 @@ test('Host inventory is authenticated, read-only, local-first, and disposable', 
   const remote = { carrier: { call() { carrierCalls++ }, open() { carrierCalls++ } }, alias: 'Ubuntu' }
   const ctx = {
     webServer: { register(route) { registered.push(route); return () => { route.removed = true } } },
-    connection: { requestRejection() { authCalls++; return undefined } }
+    authorizeRequest() { authCalls++; return undefined }
   }
   const dispose = registerHostInventory(ctx, new Map([['remote-1', remote], ['local', local]]))
   assert.equal(registered.length, 1)
@@ -125,11 +125,11 @@ test('Host inventory is authenticated, read-only, local-first, and disposable', 
   assert.equal(authCalls, 1)
   assert.equal(carrierCalls, 0)
   const unauthorized = fakeResponse()
-  ctx.connection.requestRejection = () => 401
+  ctx.authorizeRequest = () => 401
   await registered[0].handler({ method: 'GET' }, unauthorized)
   assert.equal(unauthorized.status, 401)
   const method = fakeResponse()
-  ctx.connection.requestRejection = () => undefined
+  ctx.authorizeRequest = () => undefined
   await registered[0].handler({ method: 'POST' }, method)
   assert.equal(method.status, 405)
   dispose()
@@ -146,21 +146,21 @@ test('Host inventory exposes carrier phase and configured label without dialing'
     open() { carrierCalls++ }
   }
   const remote = {
-    label: 'Remote Linux',
+    label: 'Ubuntu Dell',
     getState: () => ({ phase: 'connecting' }),
     call() { carrierCalls++ },
     open() { carrierCalls++ }
   }
   const ctx = {
     webServer: { register(route) { registered.push(route); return () => {} } },
-    connection: { requestRejection() { return undefined } }
+    authorizeRequest() { return undefined }
   }
   registerHostInventory(ctx, new Map([['remote-1', remote], ['local', local]]))
   const response = fakeResponse()
   await registered[0].handler({ method: 'GET' }, response)
   assert.deepEqual(JSON.parse(response.body), { hosts: [
     { hostId: 'local', label: '本机', state: 'connected' },
-    { hostId: 'remote-1', label: 'Remote Linux', state: 'connecting' }
+    { hostId: 'remote-1', label: 'Ubuntu Dell', state: 'connecting' }
   ] })
   assert.equal(carrierCalls, 0)
 })

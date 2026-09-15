@@ -3,12 +3,19 @@ import { EventEmitter } from 'node:events'
 import http from 'node:http'
 import test from 'node:test'
 import {
+  CURRENT_RUNTIME_VERSION,
+  HISTORY_EPOCH_CAPABILITY,
+  HISTORY_EPOCH_HEADER,
+  createRuntimeInterface,
+} from '../packages/runtime-interface/src/index.js'
+import {
   Config,
   MOBILE_EVENTS_HOST_PATH,
   MOBILE_EVENTS_MUX_PATH,
   MOBILE_SESSION_V3_CAPABILITY,
   MOBILE_SESSION_V3_DELTA_PATH,
   MOBILE_SESSION_V3_DESCRIBE_PATH,
+  MOBILE_SESSION_V3_DETAILS_PATH,
   MOBILE_SESSION_V3_EVENTS_PATH,
   MOBILE_SESSION_V3_HISTORY_PATH,
   MOBILE_SESSION_V3_PROTOCOL_VERSION,
@@ -47,7 +54,7 @@ class MockResponse extends EventEmitter {
   write(value) { this.chunks.push(String(value)); return true }
   end(value = '') { this.body = String(value); this.writableEnded = true }
 }
-function harness({ sessionController = {}, workspaceController = {}, subagents, interactions, requestRejection, config = {} } = {}) {
+function harness({ session = {}, workspace = {}, subagents, interactions, requestRejection, config = {}, runtimeOptions = {} } = {}) {
   const routes = new Map(); const authRequests = []; const listeners = new Map()
   const on = (event, listener) => {
     let bucket = listeners.get(event)
@@ -56,16 +63,33 @@ function harness({ sessionController = {}, workspaceController = {}, subagents, 
     return () => { bucket.delete(listener); if (bucket.size === 0) listeners.delete(event) }
   }
   const emit = (event, ...args) => { for (const listener of [...(listeners.get(event) ?? [])]) listener(...args) }
+  const connection = { requestRejection(request) { authRequests.push(request); return requestRejection } }
+  const runtimeInterface = createRuntimeInterface({
+    sessionController: session,
+    workspaceController: workspace,
+    connection,
+    subagents: subagents ?? {},
+    ...runtimeOptions,
+  })
   const ctx = {
     webServer: { register(route) { routes.set(route.path, route); return () => routes.delete(route.path) } },
-    connection: { requestRejection(request) { authRequests.push(request); return requestRejection } },
-    sessionController, workspaceController, subagents, mobileInteractions: interactions,
+    runtimeInterface, mobileInteractions: interactions,
     on,
     provide(key, value) { this[key] = value },
     effect(fn) { return fn() },
   }
   const dispose = apply(ctx, config)
   return { routes, authRequests, dispose, ctx, emit, listeners }
+}
+
+function runtimeSourceFor({ session = {}, workspace = {}, subagents = {} } = {}) {
+  const runtime = createRuntimeInterface({
+    sessionController: session,
+    workspaceController: workspace,
+    connection: { requestRejection() {} },
+    subagents,
+  })
+  return { runtime, session: runtime.session, workspace: runtime.workspace, subagents: runtime.subagents }
 }
 
 function strictContext(values, unexpectedReads = []) {
@@ -90,7 +114,7 @@ test('direct RC1 delta pins follow cursor, expands chunk rows, and preserves spa
     ], true) },
     page: (request) => { calls.push(request); return { records: [event(10), event(20)], hasMore: false } },
   }
-  const result = await readSessionDelta(controller, { sessionId: 'sparse', afterSeq: 20 })
+  const result = await readSessionDelta(runtimeSourceFor({ session: controller }), { sessionId: 'sparse', afterSeq: 20 })
   assert.equal(result.ok, true)
   assert.deepEqual(result.value.events.map(entry => entry.event.seq), [26, 27, 28, 29, 30, 31])
   assert.deepEqual(result.value.events.map(entry => entry.event.time), [100, 104, 110, 113, 120, 122])
@@ -119,7 +143,7 @@ test('direct delta adopts a rejected next after cancellation without unhandled r
   process.on('unhandledRejection', onUnhandled)
   try {
     await assert.rejects(
-      readSessionDelta(controller, { sessionId: 's-1', afterSeq: 0 }, { maxEvents: 8 }, abort.signal),
+      readSessionDelta(runtimeSourceFor({ session: controller }), { sessionId: 's-1', afterSeq: 0 }, { maxEvents: 8 }, abort.signal),
       error => error === cancellation,
     )
     await new Promise(resolve => setImmediate(resolve))
@@ -162,7 +186,7 @@ test('v3 history and delta use the official catalog address for subagent session
         }
       },
     },
-    sessionController: {
+    session: {
       list: async () => ({ items: [
         { sessionId: 'parent', origin: 'session' },
         { sessionId: 'child', origin: 'subagent', parentSessionId: 'parent' },
@@ -213,7 +237,7 @@ test('v3 history retries a temporarily unavailable child against a refreshed cat
         }
       },
     },
-    sessionController: {
+    session: {
       list: async () => ({ items: [{ sessionId: 'child', origin: 'subagent', parentSessionId: 'parent' }] }),
       follow: () => followSnapshot(1, [event(1)], false),
       page: () => ({ records: [], hasMore: false }),
@@ -253,7 +277,7 @@ test('v3 history preserves a catalog diagnostic entry by child id', async () => 
         }
       },
     },
-    sessionController: {
+    session: {
       list: async () => ({ items: [{ sessionId: 'child', origin: 'subagent', parentSessionId: 'parent' }] }),
       follow: () => followSnapshot(1, [event(1)], false),
       page: () => ({ records: [], hasMore: false }),
@@ -288,7 +312,7 @@ test('v3 history coalesces concurrent catalog refreshes for one parent', async (
         return { entries: [{ kind: 'child', id: 'child', mode: 'continuable' }], parentAvailable: true }
       },
     },
-    sessionController: {
+    session: {
       list: async () => ({ items: [{ sessionId: 'child', origin: 'subagent', parentSessionId: 'parent' }] }),
       follow: () => followSnapshot(1, [event(1)], false),
       page: () => ({ records: [], hasMore: false }),
@@ -337,7 +361,7 @@ test('v3 catalog corrupt diagnostics expire so a repaired catalog can recover', 
         return { entries: [{ kind: 'child', id: 'child', mode: 'continuable' }], parentAvailable: true }
       },
     },
-    sessionController: {
+    session: {
       list: async () => ({ items: [{ sessionId: 'child', origin: 'subagent', parentSessionId: 'parent' }] }),
       follow: () => followSnapshot(1, [event(1)], false),
       page: () => ({ records: [], hasMore: false }),
@@ -411,7 +435,7 @@ test('background v3 events keep catalog metadata without opening per-session his
         parentAvailable: true,
       }),
     },
-    sessionController: {
+    session: {
       list: async () => ({ items: [{ sessionId: 'child', origin: 'subagent', parentSessionId: 'parent' }] }),
       follow: (request, signal) => {
         calls.push({ request, signal })
@@ -448,13 +472,17 @@ test('strict Cordis Context never reads plugin-private addressBook while opening
     follow: () => followSnapshot(1, records, false),
     page: () => ({ records, hasMore: false }),
   }
-  const strict = strictContext({
+  const workspace = { follow: () => (async function * () { yield { type: 'baseline', value: { items: [], archivedSessionIds: [] } } })() }
+  const runtimeInterface = createRuntimeInterface({
     sessionController: controller,
-    workspaceController: { follow: () => (async function * () { yield { type: 'baseline', value: { items: [], archivedSessionIds: [] } } })() },
-    subagents: undefined,
+    workspaceController: workspace,
+    connection: { requestRejection() {} },
+    subagents: {},
+  })
+  const strict = strictContext({
+    runtimeInterface,
     mobileInteractions: undefined,
     webServer: { register() { return () => {} } },
-    connection: { requestRejection() {} },
     on() { return () => {} },
     provide(key, value) { this[key] = value },
     effect(fn) { return fn() },
@@ -462,7 +490,8 @@ test('strict Cordis Context never reads plugin-private addressBook while opening
   const state = new MobileSessionSyncState({ maxInlineBytes: 1 })
   try {
     const options = { maxEvents: 8, maxBytes: 64 * 1024, maxInlineBytes: 1, maxDetailChunkBytes: 1024, maxHistoryPages: 4 }
-    const history = await readMobileV3History(strict, { sessionId: 's' }, state, options)
+    const source = { session: runtimeInterface.session, workspace: runtimeInterface.workspace, subagents: runtimeInterface.subagents, eventSource: runtimeInterface.bindEventSource(strict) }
+    const history = await readMobileV3History(source, { sessionId: 's' }, state, options)
     assert.equal(history.ok, true)
     const ref = history.value.events[0].body.message.content[0].detailRef
     assert.ok(ref)
@@ -471,7 +500,7 @@ test('strict Cordis Context never reads plugin-private addressBook while opening
     assert.equal(details.ok, true)
     assert.equal(details.value.text, 'strict context detail')
 
-    const snapshot = await readMobileV3Snapshot(strict, state)
+    const snapshot = await readMobileV3Snapshot(source, state)
     assert.equal(snapshot.ok, true)
     assert.deepEqual(snapshot.value.sessions, [{ sessionId: 's', lastSeq: 1, authoritative: true }])
 
@@ -499,7 +528,7 @@ test('strict Cordis Context never reads plugin-private addressBook while opening
   const facadeCalls = []
   const facade = {
     addressBook: { resolve: async () => ({ kind: 'session', sessionId: 's' }) },
-    sessionController: {
+    session: {
       follow: request => { facadeCalls.push(request); return followSnapshot(0, [], false) },
       page: () => ({ records: [], hasMore: false }),
     },
@@ -520,7 +549,7 @@ test('apply installs one global session bridge and forwards live events without 
     subagents: {
       remoteExportList: async () => ({ entries: [{ kind: 'child', id: 'child', mode: 'continuable' }], parentAvailable: true }),
     },
-    sessionController: {
+    session: {
       list: async () => ({ items: [{ sessionId: 'child', origin: 'subagent', parentSessionId: 'parent' }] }),
       follow: request => {
         calls.push(request)
@@ -538,21 +567,29 @@ test('apply installs one global session bridge and forwards live events without 
   }
 })
 
-test('created suffix is synchronous, uses firstLiveSeq and precedes the next live event', async () => {
+test('created suffix crosses the interface once and precedes the next live event', async () => {
   const state = new MobileSessionSyncState()
   const stream = state.subscribe({ sessionId: 's', channel: 'v3' })[Symbol.asyncIterator]()
-  const starts = []
+  const starts = [], listeners = new Map()
+  const runtime = createRuntimeInterface({ sessionController: {}, workspaceController: {}, connection: {}, subagents: {} })
+  const source = runtime.bindEventSource({ on(name, callback, options) {
+    assert.equal(options.global, true)
+    listeners.set(name, callback)
+    return () => listeners.delete(name)
+  } })
+  state.installGlobalSessionBridge(source)
   try {
-    const session = { id: 's', firstLiveSeq: 10, lastSeq: 999, snapshotEvents(start) {
+    const session = { id: 's', firstLiveSeq: 10, lastSeq: 999, secretContext: {}, snapshotEvents(start) {
       starts.push(start)
       return [event(10).event, event(11).event].filter(value => value.seq >= start)
     } }
-    state.ingestGlobalSessionCreated(session)
-    state.ingestGlobalSessionEvent(session, event(12).event)
+    listeners.get('session/created')(session)
+    listeners.get('session/event')(session, event(12).event)
     assert.deepEqual(starts, [10])
     assert.deepEqual([(await stream.next()).value.seq, (await stream.next()).value.seq, (await stream.next()).value.seq], [10, 11, 12])
-    state.ingestGlobalSessionCreated(session)
-    assert.deepEqual(starts, [10, 13])
+    listeners.get('session/created')(session)
+    assert.deepEqual(starts, [10, 10])
+    assert.equal(state.cachedEvents('s').length, 3)
   } finally { state.dispose() }
 })
 
@@ -560,7 +597,7 @@ test('bad global payload stays local and does not publish a false watermark', ()
   const state = new MobileSessionSyncState({ diagnostics: true })
   try {
     const invalid = event(10).event
-    invalid.sourceEventSeqs = [1, 'invalid']
+    invalid.surfaceOp = { op: 'replace', startSeq: 1, endSeq: 'invalid' }
     assert.doesNotThrow(() => state.ingestGlobalSessionEvent({ id: 's' }, invalid))
     assert.equal(state.getWatermark('s'), undefined)
     state.ingestGlobalSessionEvent({ id: 's' }, event(11).event)
@@ -672,7 +709,7 @@ test('on-demand history bootstrap is capped at two per Host and serialized per s
   try {
     const options = { maxEvents: 8, maxBytes: 64 * 1024, maxInlineBytes: 64 * 1024, maxDetailChunkBytes: 1024, maxHistoryPages: 4 }
     state.startBackground({
-      sessionController: {
+      session: {
         list: async () => ({ items: [] }),
         control: signal => {
           controlStarted = true
@@ -769,7 +806,7 @@ test('lazy detail reads use the same official subagent address', async () => {
     subagents: {
       remoteExportList: async () => ({ entries: [{ kind: 'child', id: 'child', mode: 'one-shot' }], parentAvailable: true }),
     },
-    sessionController: {
+    session: {
       list: async () => ({ items: [{ sessionId: 'child', origin: 'subagent', parentSessionId: 'parent' }] }),
       follow: () => followSnapshot(1, [event(1, 'tool/call', { callId: 'call-1', name: 'read', arguments: '{"secret":"hidden","path":"src/main.c"}' })], false),
       page: request => {
@@ -813,8 +850,8 @@ test('v3 snapshot uses explicit pending watermarks and excludes archived session
   const state = new MobileSessionSyncState()
   let followed = 0
   const context = {
-    sessionController: { list: async () => ({ items: [{ sessionId: 'cold', projections: { asOfSeq: 999 } }, { sessionId: 'archived' }] }), follow: () => { followed += 1; return followSnapshot(9, [], false) } },
-    workspaceController: { follow: () => (async function * () { yield { type: 'baseline', value: { items: [], archivedSessionIds: ['archived'] } } })() },
+    session: { list: async () => ({ items: [{ sessionId: 'cold', projections: { asOfSeq: 999 } }, { sessionId: 'archived' }] }), follow: () => { followed += 1; return followSnapshot(9, [], false) } },
+    workspace: { follow: () => (async function * () { yield { type: 'baseline', value: { items: [], archivedSessionIds: ['archived'] } } })() },
   }
   const result = await readMobileV3Snapshot(context, state)
   assert.equal(result.ok, true); assert.equal(followed, 0)
@@ -836,7 +873,7 @@ test('apply registers authenticated v3 and compatibility SSE route families with
 })
 
 test('describe route advertises v3 limits and direct delta request uses controller faces', async () => {
-  const h = harness({ config: { v3MaxEvents: 3, v3MaxBytes: 2048 }, sessionController: { follow: () => followSnapshot(2, [event(1), event(2)], false), page: () => ({ records: [], hasMore: false }) } })
+  const h = harness({ config: { v3MaxEvents: 3, v3MaxBytes: 2048 }, session: { follow: () => followSnapshot(2, [event(1), event(2)], false), page: () => ({ records: [], hasMore: false }) } })
   const describe = new MockResponse()
   await h.routes.get(MOBILE_SESSION_V3_DESCRIBE_PATH).handler(new MockRequest('', { method: 'GET' }), describe)
   const advertised = JSON.parse(describe.body); assert.equal(advertised.protocolVersion, MOBILE_SESSION_V3_PROTOCOL_VERSION); assert.equal(advertised.capability, MOBILE_SESSION_V3_CAPABILITY)
@@ -846,6 +883,110 @@ test('describe route advertises v3 limits and direct delta request uses controll
   await h.routes.get(MOBILE_SESSION_V3_DELTA_PATH).handler(new MockRequest(body, { method: 'POST', headers: { 'content-type': 'application/json' } }), response)
   assert.equal(response.statusCode, 200); assert.equal(JSON.parse(response.body).rpcId, 'rpc-1'); assert.deepEqual(JSON.parse(response.body).result.events.map(e => e.seq), [2])
   h.dispose()
+})
+
+test('current v3 routes negotiate, bind, and emit one persisted history epoch', async () => {
+  const epoch = 'history-dataset-7'
+  let followCalls = 0
+  const h = harness({
+    runtimeOptions: { upstreamVersion: CURRENT_RUNTIME_VERSION, historyEpoch: epoch },
+    config: { v3MaxInlineBytes: 1 },
+    session: {
+      follow: async function * (request) {
+        followCalls += 1
+        assert.equal(request.assistantStream, true)
+        for await (const snapshot of followSnapshot(2, [event(2, 'assistant/message', {
+          message: { role: 'assistant', content: [{ type: 'text', text: 'durable detail' }] },
+        })], false)) yield { ...snapshot, assistantStream: { revision: 0 } }
+      },
+      page: () => ({ records: [], hasMore: false }),
+    },
+  })
+  try {
+    const describe = new MockResponse()
+    await h.routes.get(MOBILE_SESSION_V3_DESCRIBE_PATH).handler(new MockRequest('', { method: 'GET' }), describe)
+    const advertised = JSON.parse(describe.body)
+    assert.equal(advertised.capability, MOBILE_SESSION_V3_CAPABILITY)
+    assert.ok(advertised.capabilities.includes(MOBILE_SESSION_V3_CAPABILITY))
+    assert.ok(advertised.capabilities.includes(HISTORY_EPOCH_CAPABILITY))
+    assert.equal(advertised.historyEpoch, epoch)
+    assert.equal(advertised.historyEpochMode, 'epoch')
+
+    const history = new MockResponse()
+    await h.routes.get(MOBILE_SESSION_V3_HISTORY_PATH).handler(new MockRequest(JSON.stringify({ sessionId: 's' }), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+    }), history)
+    assert.equal(history.statusCode, 200)
+    const historyValue = JSON.parse(history.body)
+    assert.equal(historyValue.historyEpoch, epoch)
+    assert.equal(historyValue.historyEpochMode, 'epoch')
+    const detailRef = historyValue.events[0].body.message.content[0].detailRef
+    assert.ok(detailRef)
+
+    const missingDelta = new MockResponse()
+    await h.routes.get(MOBILE_SESSION_V3_DELTA_PATH).handler(new MockRequest(JSON.stringify({ sessionId: 's', afterSeq: 1 }), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+    }), missingDelta)
+    assert.equal(missingDelta.statusCode, 409)
+    assert.deepEqual(JSON.parse(missingDelta.body).error, {
+      code: 'history-epoch-required',
+      message: 'history baseline required',
+      details: { baselineRequired: true, historyEpoch: epoch },
+    })
+    assert.equal(followCalls, 1)
+
+    const delta = new MockResponse()
+    await h.routes.get(MOBILE_SESSION_V3_DELTA_PATH).handler(new MockRequest(JSON.stringify({ sessionId: 's', afterSeq: 1 }), {
+      method: 'POST', headers: { 'content-type': 'application/json', [HISTORY_EPOCH_HEADER]: epoch },
+    }), delta)
+    assert.equal(delta.statusCode, 200)
+    assert.equal(JSON.parse(delta.body).historyEpoch, epoch)
+
+    const mismatchedDelta = new MockResponse()
+    await h.routes.get(MOBILE_SESSION_V3_DELTA_PATH).handler(new MockRequest(JSON.stringify({ sessionId: 's', afterSeq: 1 }), {
+      method: 'POST', headers: { 'content-type': 'application/json', [HISTORY_EPOCH_HEADER]: 'old-history' },
+    }), mismatchedDelta)
+    assert.equal(mismatchedDelta.statusCode, 409)
+    assert.equal(JSON.parse(mismatchedDelta.body).error.code, 'history-epoch-mismatch')
+
+    const missingDetail = new MockResponse()
+    const detailQuery = `?sessionId=s&seq=${detailRef.seq}&version=${detailRef.version}&field=${encodeURIComponent(detailRef.field)}`
+    await h.routes.get(MOBILE_SESSION_V3_DETAILS_PATH).handler(new MockRequest('', {
+      method: 'GET', url: `${MOBILE_SESSION_V3_DETAILS_PATH}${detailQuery}`,
+    }), missingDetail)
+    assert.equal(missingDetail.statusCode, 409)
+    assert.equal(JSON.parse(missingDetail.body).error.code, 'history-epoch-required')
+
+    const detail = new MockResponse()
+    await h.routes.get(MOBILE_SESSION_V3_DETAILS_PATH).handler(new MockRequest('', {
+      method: 'GET', url: `${MOBILE_SESSION_V3_DETAILS_PATH}${detailQuery}`,
+      headers: { [HISTORY_EPOCH_HEADER]: epoch },
+    }), detail)
+    assert.equal(detail.statusCode, 200)
+    assert.equal(JSON.parse(detail.body).historyEpoch, epoch)
+
+    const missingResume = new MockResponse()
+    await h.routes.get(MOBILE_SESSION_V3_EVENTS_PATH).handler(new MockRequest('', {
+      method: 'GET', url: `${MOBILE_SESSION_V3_EVENTS_PATH}?sessionId=s&sinceSeq=1`,
+    }), missingResume)
+    assert.equal(missingResume.statusCode, 409)
+    assert.equal(JSON.parse(missingResume.body).error.code, 'history-epoch-required')
+
+    const eventsRequest = new MockRequest('', { method: 'GET', url: `${MOBILE_SESSION_V3_EVENTS_PATH}?sessionId=s` })
+    const eventsResponse = new MockResponse()
+    const eventsDone = h.routes.get(MOBILE_SESSION_V3_EVENTS_PATH).handler(eventsRequest, eventsResponse)
+    await new Promise(resolve => setImmediate(resolve))
+    const baseline = JSON.parse(eventsResponse.chunks[0].replace(/^data: /, '').trim())
+    assert.deepEqual(baseline, {
+      sessionId: 's', type: 'control/history-baseline', time: baseline.time,
+      body: { historyEpoch: epoch, historyEpochMode: 'epoch', baselineRequired: false },
+      historyEpoch: epoch, historyEpochMode: 'epoch',
+    })
+    eventsRequest.emit('close')
+    await eventsDone
+  } finally {
+    h.dispose()
+  }
 })
 
 test('v3 history HTTP errors preserve safe catalog diagnostics and remove secret fields', async () => {
@@ -858,7 +999,7 @@ test('v3 history HTTP errors preserve safe catalog diagnostics and remove secret
         throw error
       },
     },
-    sessionController: {
+    session: {
       list: async () => ({ items: [{ sessionId: 'child', origin: 'subagent', parentSessionId: 'parent' }] }),
       follow: () => followSnapshot(1, [event(1)], false),
       page: () => ({ records: [], hasMore: false }),
@@ -932,7 +1073,7 @@ test('real node HTTP SSE flushes an idle handshake and releases its subscriber o
   }
   t.after(() => { MobileSessionSyncState.prototype.subscribe = originalSubscribe })
 
-  const h = harness({ sessionController: {}, workspaceController: {} })
+  const h = harness({ session: {}, workspace: {} })
   let handlerDone = false
   let handlerFailure
   const server = http.createServer((req, res) => {
@@ -1131,34 +1272,34 @@ test('official api-session/status is exposed as an events.host refresh signal', 
     h.dispose()
   }
 })
-test('surface metadata retains source identity including an explicitly empty source list', () => {
+test('surface metadata retains canonical source identity and replacement bounds', () => {
   const state = new MobileSessionSyncState()
   try {
     for (const type of ['user/message', 'assistant/message', 'tool/result']) {
-      for (const sources of [[], [1, 2]]) {
+      for (const sourceSeq of [0, 1_234]) {
         const entry = event(9, type, {})
-        entry.event.sourceEventSeqs = sources
-        entry.event.surfaceOp = { op: 'replace', start: 1, end: 8 }
+        entry.event.sourceSeq = sourceSeq
+        entry.event.surfaceOp = { op: 'replace', startSeq: 1, endSeq: 8 }
         const result = convertMobileHistoryEntry(entry, 's', state)
-        assert.deepEqual(result.body.sourceEventSeqs, sources)
+        assert.equal(result.sourceSeq, sourceSeq)
         assert.deepEqual(result.body.surfaceOp, entry.event.surfaceOp)
       }
     }
     const entry = event(9)
     entry.event.surfaceOp = 'append'
     assert.equal(convertMobileHistoryEntry(entry, 's', state).body.surfaceOp, 'append')
-    assert.equal(Object.hasOwn(convertMobileHistoryEntry(event(9), 's', state).body ?? {}, 'sourceEventSeqs'), false)
+    assert.equal(Object.hasOwn(convertMobileHistoryEntry(event(9), 's', state), 'sourceSeq'), false)
   } finally { state.dispose() }
 })
 
-test('surface sources are never truncated or filtered into a different identity', () => {
+test('surface source sequence remains a single exact canonical value', () => {
   const state = new MobileSessionSyncState()
   try {
     const entry = event(5000)
-    entry.event.sourceEventSeqs = Array.from({ length: 4500 }, (_, i) => i)
-    assert.equal(convertMobileHistoryEntry(entry, 's', state).body.sourceEventSeqs.length, 4500)
-    entry.event.sourceEventSeqs = [1, '2']
-    assert.throws(() => convertMobileHistoryEntry(entry, 's', state), /unknown-source-sequence/)
+    entry.event.sourceSeq = 4_500
+    assert.equal(convertMobileHistoryEntry(entry, 's', state).sourceSeq, 4_500)
+    entry.event.sourceSeq = '2'
+    assert.equal(Object.hasOwn(convertMobileHistoryEntry(entry, 's', state), 'sourceSeq'), false)
   } finally { state.dispose() }
 })
 test('in-process session events reuse mux framing and release on abort', async () => {
@@ -1168,10 +1309,10 @@ test('in-process session events reuse mux framing and release on abort', async (
   const abort = new AbortController()
   const events = module.createMobileSessionEvents(state).subscribe({ sessionId: 's', signal: abort.signal })
   const pending = events.next()
-  state.emit({ sessionId: 's', seq: 3, type: 'assistant/message', body: { message: { content: [] }, sourceEventSeqs: [1], surfaceOp: 'append' } })
+  state.emit({ sessionId: 's', seq: 3, sourceSeq: 1, type: 'assistant/message', body: { message: { content: [] }, surfaceOp: 'append' } })
   const frame = (await pending).value
   assert.equal(frame.method, 'session/event')
-  assert.deepEqual(frame.payload.event.sourceEventSeqs, [1])
+  assert.equal(frame.payload.event.sourceSeq, 1)
   const idle = events.next()
   abort.abort()
   assert.equal((await idle).done, true)

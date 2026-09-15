@@ -1,10 +1,13 @@
 import { spawn } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { createConnection } from 'node:net'
+import { normalizeRuntimeVersion } from 'dsh-runtime-interface'
 import { lazyCarrier } from './lazy-carrier.js'
 
 export const name = 'rc1-host-carriers'
-export const inject = ['webServer', 'connection']
+export const inject = ['webServer', 'runtimeInterface']
+export const OFFICIAL_UPSTREAM_VERSION = '0.1.5-rc.2'
+export const REMOTE_UPSTREAM_VERSION = '0.1.2-rc.1'
 
 export function validateTarget(target) {
   if (!target || !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(target.id ?? '') || target.id === 'local') throw new Error('HOST_ID_INVALID')
@@ -20,12 +23,40 @@ function sshArgs(target) {
 }
 
 /** Never expose helper stdout/stderr to diagnostic exceptions. */
-async function capture(target, command, signal) {
+export const SYSTEMD_RESTART_COMMAND = 'systemctl --user restart dsh-web.service'
+
+function upstreamVersion(target) {
+  return target?.upstreamVersion === undefined
+    ? REMOTE_UPSTREAM_VERSION
+    : normalizeRuntimeVersion(target.upstreamVersion)
+}
+
+/** Keep lifecycle and the legacy file proxy outside the runtime interface. */
+function exposeCarrier({ hostId, carrier, label, version, raw, runtimeInterface }) {
+  const wrapped = runtimeInterface.wrapHostCarrier({
+    hostId,
+    carrier,
+    upstreamVersion: version,
+    identity: { hostId },
+  })
+  return {
+    ...wrapped,
+    label,
+    getState: carrier.getState?.bind(carrier),
+    connect: carrier.connect?.bind(carrier),
+    close: carrier.close?.bind(carrier),
+    // file-proxy.js is the only existing raw transport consumer. Keep this
+    // compatibility field on the carrier record while call/open stay wrapped.
+    ...(typeof raw === 'function' ? { raw } : {}),
+  }
+}
+
+async function capture(target, command, signal, timeoutMs = 15000) {
   const child = spawn('ssh', [...sshArgs(target), target.alias, command], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
   return new Promise((resolve, reject) => {
     let output = '', bytes = 0
     const abort = () => child.kill()
-    const timer = setTimeout(abort, 15000)
+    const timer = setTimeout(abort, timeoutMs)
     signal.addEventListener('abort', abort, { once: true })
     child.stdout.on('data', chunk => { bytes += chunk.length; if (bytes > 4096) child.kill(); else output += chunk.toString('utf8') })
     child.stderr.resume()
@@ -105,10 +136,128 @@ export async function connectSshCarrier(target, lifetime, createCarrier, WebSock
   }
 }
 
+export function createRemoteHostControl({ seedTargets, createCarrier, WebSocket, perHost, localCarrier, lifetime, runtimeInterface }) {
+  const seed = (seedTargets ?? []).map(target => validateTarget(target))
+  const hostLife = new Map()
+  const lastError = new Map()
+  const helperOk = new Map()
+  let live = seed.map(target => ({ ...target, enabled: target.enabled !== false }))
+
+  function stop(id) {
+    hostLife.get(id)?.abort()
+    hostLife.delete(id)
+    const carrier = perHost.get(id)
+    if (id !== 'local' && carrier) {
+      carrier.close()
+      perHost.delete(id)
+    }
+  }
+
+  function attach(target) {
+    if (target.enabled === false) return
+    stop(target.id)
+    const life = new AbortController()
+    const linked = () => life.abort()
+    if (lifetime.aborted) life.abort(lifetime.reason)
+    else lifetime.addEventListener('abort', linked, { once: true })
+    hostLife.set(target.id, life)
+    const version = upstreamVersion(target)
+    const lazy = lazyCarrier(async signal => {
+      try {
+        const entry = await connectSshCarrier(target, signal, createCarrier, WebSocket)
+        lastError.delete(target.id)
+        helperOk.set(target.id, true)
+        return entry
+      } catch (error) {
+        lastError.set(target.id, error?.message)
+        if (String(error?.message ?? '').includes('BOOTSTRAP_READ')) helperOk.set(target.id, false)
+        throw error
+      }
+    }, life.signal)
+    const carrier = exposeCarrier({
+      hostId: target.id,
+      carrier: lazy,
+      label: target.label,
+      version,
+      raw: lazy.raw.bind(lazy),
+      runtimeInterface,
+    })
+    perHost.set(target.id, carrier)
+  }
+
+  for (const target of live) attach(target)
+
+  return {
+    getConfiguredTargets: () => seed,
+    snapshot() {
+      const remotes = {}
+      for (const target of live) {
+        remotes[target.id] = {
+          state: perHost.get(target.id)?.getState?.() ?? (target.enabled === false ? 'disabled' : 'offline'),
+          lastError: lastError.get(target.id) ?? null,
+          helperReadable: helperOk.get(target.id) === true,
+        }
+      }
+      return {
+        local: { state: localCarrier.getState(), lastError: lastError.get('local') ?? null },
+        remotes,
+      }
+    },
+    async hydrate(list) {
+      live = list.map(target => ({ ...validateTarget(target), enabled: target.enabled !== false }))
+      const keep = new Set(live.filter(target => target.enabled !== false).map(target => target.id))
+      for (const id of [...perHost.keys()]) {
+        if (id !== 'local' && !keep.has(id)) stop(id)
+      }
+      for (const target of live) {
+        if (target.enabled === false) stop(target.id)
+        else attach(target)
+      }
+    },
+    async disconnect(id) {
+      if (id === 'local') throw new Error('HOST_LOCAL_READONLY')
+      if (!live.some(target => target.id === id)) throw new Error('HOST_NOT_FOUND')
+      stop(id)
+    },
+    async retry(id, requestSignal) {
+      if (id === 'local') throw new Error('HOST_LOCAL_READONLY')
+      const target = live.find(item => item.id === id)
+      if (!target || target.enabled === false) throw new Error('HOST_NOT_FOUND')
+      requestSignal?.throwIfAborted()
+      attach(target)
+      await perHost.get(id).connect(requestSignal)
+    },
+    async restart(id, requestSignal) {
+      if (id === 'local') throw new Error('HOST_LOCAL_READONLY')
+      const target = live.find(item => item.id === id)
+      if (!target) throw new Error('HOST_NOT_FOUND')
+      if (target.launch !== 'systemd-user') throw new Error('RESTART_UNSUPPORTED')
+      requestSignal?.throwIfAborted()
+      stop(id)
+      const signal = requestSignal ? AbortSignal.any([lifetime, requestSignal]) : lifetime
+      try {
+        await capture(target, SYSTEMD_RESTART_COMMAND, signal, 30000)
+      } catch {
+        attach(target)
+        if (requestSignal?.aborted) requestSignal.throwIfAborted()
+        throw new Error('RESTART_FAILED')
+      }
+      attach(target)
+      await perHost.get(id).connect(requestSignal)
+    },
+  }
+}
+
 export async function apply(ctx, config = {}) {
   const [{ createCarrier }, { default: WebSocket }] = await Promise.all([
     import('dsh-mobile-interactions-compat-rc1/carrier'), import('ws'),
   ])
+  const runtimeInterface = ctx.runtimeInterface
+  if (!runtimeInterface || typeof runtimeInterface.wrapHostCarrier !== 'function' || !runtimeInterface.connection || typeof runtimeInterface.connection.authenticatedUrl !== 'function') throw new TypeError('runtimeInterface with connection/wrapHostCarrier is required')
+  const localVersion = config.upstreamVersion === undefined
+    ? runtimeInterface.upstreamVersion
+    : normalizeRuntimeVersion(config.upstreamVersion)
+  if (localVersion !== runtimeInterface.upstreamVersion) throw new Error('LOCAL_UPSTREAM_VERSION_MISMATCH')
   const targets = config.targets ?? []
   const ids = new Set(['local']), ports = new Set([ctx.webServer.port])
   for (const target of targets) {
@@ -119,16 +268,28 @@ export async function apply(ctx, config = {}) {
   const lifetime = new AbortController()
   const perHost = new Map()
   const origin = `http://127.0.0.1:${ctx.webServer.port}`
-  const localCarrier = lazyCarrier(async signal => ({
-    carrier: await createCarrier(origin, ctx.connection.authenticatedUrl(origin + '/'), WebSocket, signal), close() {},
+  const localLazy = lazyCarrier(async signal => ({
+    carrier: await createCarrier(origin, runtimeInterface.connection.authenticatedUrl(origin + '/'), WebSocket, signal),
+    close() {},
   }), lifetime.signal)
-  localCarrier.label = 'Local'
+  const localCarrier = exposeCarrier({
+    hostId: 'local',
+    carrier: localLazy,
+    label: 'Local',
+    version: localVersion,
+    raw: localLazy.raw.bind(localLazy),
+    runtimeInterface,
+  })
   perHost.set('local', localCarrier)
-  for (const target of targets) {
-    const carrier = lazyCarrier(signal => connectSshCarrier(target, signal, createCarrier, WebSocket), lifetime.signal)
-    carrier.label = target.label
-    perHost.set(target.id, carrier)
-  }
   ctx.provide('perHost', perHost)
+  ctx.provide('remoteHostsControl', createRemoteHostControl({
+    seedTargets: targets,
+    createCarrier,
+    WebSocket,
+    perHost,
+    localCarrier,
+    lifetime: lifetime.signal,
+    runtimeInterface,
+  }))
   ctx.effect(() => () => lifetime.abort(), 'rc1-host-carriers: close owned transports')
 }

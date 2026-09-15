@@ -1,0 +1,50 @@
+{
+  "name": "dsh-runtime-interface",
+  "version": "0.1.0-rc.1",
+  "description": "Canonical official-runtime boundary for DSH rc1 compatibility packages",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./lib/client.js",
+    "./browser": "./src/browser.js",
+    "./managed-runtime-launcher": "./src/managed-runtime-launcher.mjs",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-connection"
+      ]
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "Apache-2.0",
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.2",
+    "@deepseek-ai/dsh-api-session-controller": "0.1.2-rc.1 || 0.1.5-rc.2",
+    "@deepseek-ai/dsh-api-workspace-controller": "0.1.2-rc.1 || 0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-connection": "0.1.2-rc.1 || 0.1.5-rc.2",
+    "@deepseek-ai/dsh-host-webserver": "0.1.2-rc.1 || 0.1.5-rc.2",
+    "@deepseek-ai/dsh-commands": "0.1.2-rc.1 || 0.1.5-rc.2",
+    "@deepseek-ai/dsh-goal": "0.1.2-rc.1 || 0.1.5-rc.2",
+    "@deepseek-ai/dsh-agent-presets": "0.1.2-rc.1 || 0.1.5-rc.2",
+    "@deepseek-ai/dsh-subagent": "0.1.2-rc.1 || 0.1.5-rc.2"
+  },
+  "scripts": {
+    "build": "tsdown --config tsdown.config.mjs",
+    "test": "node --test ../../tests/runtime-interface.test.mjs ../../tests/runtime-interface-session-persistence.test.mjs"
+  },
+  "devDependencies": {
+    "tsdown": "0.22.2"
+  }
+}

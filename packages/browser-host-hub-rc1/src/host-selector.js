@@ -97,11 +97,11 @@ function writeRejection(response, rejection) {
  */
 export function registerHostInventory(ctx, perHost, options = {}) {
   if (!ctx?.webServer || typeof ctx.webServer.register !== 'function') throw new TypeError('webServer.register is required')
-  if (!ctx?.connection || typeof ctx.connection.requestRejection !== 'function') throw new TypeError('connection.requestRejection is required')
+  if (typeof ctx?.authorizeRequest !== 'function') throw new TypeError('interface authorization port is required')
   const path = normalizePath(options.path ?? DEFAULT_HOST_INVENTORY_PATH, 'inventoryPath')
   const handler = async (request, response) => {
     let rejection
-    try { rejection = await ctx.connection.requestRejection(request) } catch { rejection = 503 }
+    try { rejection = await ctx.authorizeRequest(request) } catch { rejection = 503 }
     if (rejection !== undefined) {
       writeRejection(response, rejection)
       return

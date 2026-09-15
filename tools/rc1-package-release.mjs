@@ -4,20 +4,10 @@ import { fileURLToPath } from 'node:url'
 import os from 'node:os'
 import path from 'node:path'
 import fs from 'node:fs'
+import { releaseProfile, releasePackageDirectories } from './release-profile.mjs'
 
-export const RC1_PACKAGE_DIRS = Object.freeze([
-  'mobile-bootstrap-rc1',
-  'mobile-interactions-compat-rc1',
-  'mobile-controller-compat-rc1',
-  'mobile-session-sync-rc1',
-  'mobile-stream-compat-rc1',
-  'rc1-host-carriers',
-  'browser-host-hub-rc1',
-  'ui-directory-picker-browse',
-  'subscriptions-compat-rc1',
-  'model-menu-filter',
-  'ui-workspace-menu-compat-rc1',
-])
+// Legacy export remains available to existing callers; the profile owns the list.
+export const RC1_PACKAGE_DIRS = Object.freeze([...releaseProfile.packageRoots])
 
 const DEPENDENCY_FIELDS = Object.freeze(['dependencies', 'optionalDependencies', 'devDependencies', 'peerDependencies'])
 const sourceDefault = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
@@ -78,6 +68,12 @@ function declaredSourceFiles(item) {
 
 function sourceHashEntries(items, sourceRoot) {
   const files = []
+  // Package bytes alone cannot reproduce the selection, dependency versions or bundling.
+  for (const relative of ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'release-profile.json', 'tools/release-profile.mjs', 'tools/rc1-package-release.mjs', 'tools/build-rc2-workspace-candidate.mjs', 'tools/prepare-official-runtime.mjs', 'tools/install-candidate-packages.mjs', 'tools/check-interface-boundary.mjs', 'docs/interface-exceptions.json']) {
+    const target = path.join(sourceRoot, relative)
+    if (!fs.existsSync(target) || !fs.lstatSync(target).isFile()) throw new Error('RELEASE_BUILD_INPUT_MISSING')
+    files.push({ path: relative, sha256: fileHash(target) })
+  }
   for (const item of items) {
     const inputs = new Set(declaredSourceFiles(item))
     // Compiled UI packages publish lib/, but provenance must also identify the
@@ -154,8 +150,11 @@ function npmPack(cwd, stagingDir) {
   return path.resolve(stagingDir, entry.filename)
 }
 
-export function buildRelease({ sourceRoot = sourceDefault, stagingDir } = {}) {
+export function buildRelease({ sourceRoot = sourceDefault, stagingDir, runtimeVersion } = {}) {
   sourceRoot = path.resolve(sourceRoot)
+  const sourceProfile = JSON.parse(fs.readFileSync(path.join(sourceRoot, 'release-profile.json'), 'utf8'))
+  runtimeVersion ??= sourceProfile.runtimeVersion
+  if (!sourceProfile.supportedRuntimeVersions.includes(runtimeVersion)) throw new Error('UNSUPPORTED_TARGET_RUNTIME')
   if (typeof stagingDir !== 'string' || stagingDir === '') throw new Error('STAGING_DIRECTORY_REQUIRED')
   stagingDir = path.resolve(stagingDir)
   assertReleaseBoundary(sourceRoot, 'source')
@@ -164,7 +163,7 @@ export function buildRelease({ sourceRoot = sourceDefault, stagingDir } = {}) {
   if (fs.existsSync(stagingDir) && fs.readdirSync(stagingDir).length !== 0) throw new Error('STAGING_NOT_EMPTY')
   fs.mkdirSync(stagingDir, { recursive: true })
 
-  const items = RC1_PACKAGE_DIRS.map(directory => readPackage(sourceRoot, directory))
+  const items = releasePackageDirectories(sourceRoot, sourceProfile).map(directory => readPackage(sourceRoot, directory))
   const names = new Set()
   const versions = new Map()
   for (const item of items) {
@@ -190,8 +189,12 @@ export function buildRelease({ sourceRoot = sourceDefault, stagingDir } = {}) {
       generated.push(sidecar)
       packages.push({ directory: item.directory, name: item.manifest.name, version: item.manifest.version, artifact: path.basename(artifact), artifactSha256, sourceFiles: sourceFiles.filter(file => file.path.startsWith(`packages/${item.directory}/`)), workspaceDependencyRewrites: rewritten.rewrites })
     }
+    if (sha256(JSON.stringify(sourceHashEntries(items, sourceRoot))) !== sourceTreeHash) throw new Error('SOURCE_CHANGED_DURING_PACK')
     const manifest = {
       releaseStatus: 'candidate',
+      runtimeVersion,
+      supportedRuntimeVersions: sourceProfile.supportedRuntimeVersions,
+      profile: sourceProfile.profile,
       sourceCommitFrozen: false,
       sourceTreeHash,
       ...(facts.gitHead ? { gitHead: facts.gitHead } : {}),
@@ -214,14 +217,16 @@ export function buildRelease({ sourceRoot = sourceDefault, stagingDir } = {}) {
 function parseArgs(argv) {
   let sourceRoot = sourceDefault
   let stagingDir
+  let runtimeVersion
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index]
     if (argument === '--source') sourceRoot = argv[++index]
     else if (argument === '--staging') stagingDir = argv[++index]
+    else if (argument === '--runtime') runtimeVersion = argv[++index]
     else if (!argument.startsWith('-') && stagingDir === undefined) stagingDir = argument
     else throw new Error('USAGE: rc1-package-release.mjs --staging <lab/artifacts/staging> [--source <worktree>]')
   }
-  return { sourceRoot, stagingDir }
+  return { sourceRoot, stagingDir, runtimeVersion }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

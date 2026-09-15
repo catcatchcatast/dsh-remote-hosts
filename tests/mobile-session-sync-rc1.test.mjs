@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import test from 'node:test'
+import { createRuntimeInterface } from '../packages/runtime-interface/src/index.js'
 import {
   Config,
   MOBILE_SESSION_DELTA_PATH,
@@ -14,6 +15,24 @@ import {
   readSessionDelta,
   readSessionSyncSnapshot,
 } from '../packages/mobile-session-sync-rc1/src/index.js'
+
+function testRuntime({ sessionController = {}, workspaceController = {}, requestRejection, authRequests } = {}) {
+  return createRuntimeInterface({
+    sessionController,
+    workspaceController,
+    connection: {
+      requestRejection(request) {
+        authRequests?.push(request)
+        return requestRejection
+      },
+    },
+    subagents: {},
+  })
+}
+
+function sessionPort(sessionController) {
+  return testRuntime({ sessionController }).session
+}
 
 function event(seq, type = 'assistant/message', data = { marker: seq }) {
   return { type: 'event', event: { seq, time: seq * 10, type, data } }
@@ -54,7 +73,7 @@ test('rc1 delta expands official chunk rows, preserves sparse seq, and pins page
     },
   }
 
-  const result = await readSessionDelta(controller, { sessionId: 'sparse', afterSeq: 20 })
+  const result = await readSessionDelta(sessionPort(controller), { sessionId: 'sparse', afterSeq: 20 })
 
   assert.equal(result.ok, true)
   assert.deepEqual(result.value.events.map(entry => entry.event.seq), [26, 27, 28, 29, 30, 31])
@@ -84,7 +103,7 @@ test('rc1 delta sorts out-of-order records and idempotently removes duplicate se
       return { records: [event(5), event(4)], hasMore: false }
     },
   }
-  const result = await readSessionDelta(controller, { sessionId: 's-1', afterSeq: 5 })
+  const result = await readSessionDelta(sessionPort(controller), { sessionId: 's-1', afterSeq: 5 })
   assert.equal(result.ok, true)
   assert.deepEqual(result.value.events.map(entry => entry.event.seq), [6, 9])
   assert.equal(pageCalls[0].beforeSeq, 6)
@@ -99,7 +118,7 @@ test('conflicting duplicate records request a baseline rather than choosing one 
       return { records: [event(5)], hasMore: false }
     },
   }
-  const result = await readSessionDelta(controller, { sessionId: 's-1', afterSeq: 5 })
+  const result = await readSessionDelta(sessionPort(controller), { sessionId: 's-1', afterSeq: 5 })
   assert.equal(result.ok, true)
   assert.equal(result.value.baselineRequired, true)
   assert.equal(result.value.baselineReason, 'duplicate-sequence-conflict')
@@ -107,38 +126,38 @@ test('conflicting duplicate records request a baseline rather than choosing one 
 })
 
 test('unsupported records and a truncated opening page produce explicit baseline recovery', async () => {
-  const unsupported = await readSessionDelta({
+  const unsupported = await readSessionDelta(sessionPort({
     follow: () => followSnapshot(4, [{ type: 'future-record', payload: 'not understood' }]),
     page: () => { throw new Error('page must not run') },
-  }, { sessionId: 's-1', afterSeq: -1 })
+  }), { sessionId: 's-1', afterSeq: -1 })
   assert.equal(unsupported.ok, true)
   assert.equal(unsupported.value.baselineRequired, true)
   assert.equal(unsupported.value.baselineReason, 'unsupported-record')
 
-  const truncated = await readSessionDelta({
+  const truncated = await readSessionDelta(sessionPort({
     follow: () => followSnapshot(10, [event(8)], false),
     page: () => { throw new Error('page must not run') },
-  }, { sessionId: 's-1', afterSeq: 5 })
+  }), { sessionId: 's-1', afterSeq: 5 })
   assert.equal(truncated.ok, true)
   assert.equal(truncated.value.baselineRequired, true)
   assert.equal(truncated.value.baselineReason, 'truncated-snapshot-page')
 })
 
 test('an empty page that claims more history and an unextendable cursor never drop events', async () => {
-  const result = await readSessionDelta({
+  const result = await readSessionDelta(sessionPort({
     follow: () => followSnapshot(10, [event(8), event(10)], true),
     page: () => ({ records: [], hasMore: true }),
-  }, { sessionId: 's-1', afterSeq: 5 })
+  }), { sessionId: 's-1', afterSeq: 5 })
   assert.equal(result.ok, true)
   assert.equal(result.value.baselineRequired, true)
   assert.equal(result.value.baselineReason, 'truncated-history-page')
 })
 
 test('a final sparse page with hasMore=false is complete even when its seq is above afterSeq', async () => {
-  const result = await readSessionDelta({
+  const result = await readSessionDelta(sessionPort({
     follow: () => followSnapshot(10, [event(8), event(10)], true),
     page: () => ({ records: [event(7)], hasMore: false }),
-  }, { sessionId: 's-1', afterSeq: 5 })
+  }), { sessionId: 's-1', afterSeq: 5 })
   assert.equal(result.ok, true)
   assert.deepEqual(result.value.events.map(entry => entry.event.seq), [7, 8, 10])
   assert.equal(result.value.baselineRequired, undefined)
@@ -147,10 +166,10 @@ test('a final sparse page with hasMore=false is complete even when its seq is ab
 test('official opening pages beginning at seq zero or one are complete for afterSeq=-1', async () => {
   for (const firstSeq of [0, 1]) {
     const cursor = firstSeq + 2
-    const result = await readSessionDelta({
+    const result = await readSessionDelta(sessionPort({
       follow: () => followSnapshot(cursor, [event(firstSeq), event(firstSeq + 1), event(cursor)], false),
       page: () => { throw new Error('page must not run') },
-    }, { sessionId: `origin-${firstSeq}`, afterSeq: -1 })
+    }), { sessionId: `origin-${firstSeq}`, afterSeq: -1 })
     assert.equal(result.ok, true)
     assert.deepEqual(result.value.events.map(entry => entry.event.seq), [firstSeq, firstSeq + 1, cursor])
     assert.equal(result.value.lastSeq, cursor)
@@ -160,10 +179,10 @@ test('official opening pages beginning at seq zero or one are complete for after
 })
 
 test('an afterSeq ahead of the authoritative follow cursor requests a clean baseline', async () => {
-  const result = await readSessionDelta({
+  const result = await readSessionDelta(sessionPort({
     follow: () => followSnapshot(20, [event(20)], false, { asOfSeq: 20, values: { secret: 'old' } }),
     page: () => { throw new Error('page must not run') },
-  }, { sessionId: 's-1', afterSeq: 100 })
+  }), { sessionId: 's-1', afterSeq: 100 })
   assert.equal(result.ok, true)
   assert.equal(result.value.baselineRequired, true)
   assert.equal(result.value.baselineReason, 'cursor-regressed')
@@ -185,7 +204,7 @@ test('controller cancellation aborts an in-flight page without returning a parti
       return new Promise(() => {})
     },
   }
-  const pending = readSessionDelta(controller, { sessionId: 's-1', afterSeq: 1 }, undefined, abort.signal)
+  const pending = readSessionDelta(sessionPort(controller), { sessionId: 's-1', afterSeq: 1 }, undefined, abort.signal)
   await started
   abort.abort(new Error('caller cancelled'))
   await assert.rejects(pending, /cancelled/)
@@ -194,10 +213,10 @@ test('controller cancellation aborts an in-flight page without returning a parti
 test('composite rh1 session IDs are rejected before touching the controller', async () => {
   let followed = false
   await assert.rejects(
-    readSessionDelta({
+    readSessionDelta(sessionPort({
       follow: () => { followed = true; return followSnapshot(0, []) },
       page: () => ({ records: [], hasMore: false }),
-    }, { sessionId: 'rh1.aGVsbG8.c2Vzc2lvbg', afterSeq: -1 }),
+    }), { sessionId: 'rh1.aGVsbG8.c2Vzc2lvbg', afterSeq: -1 }),
     /rh1 remote composite id/,
   )
   assert.equal(followed, false)
@@ -231,7 +250,8 @@ test('snapshot uses workspace baseline archive filtering and a follow cursor for
     },
   }
 
-  const result = await readSessionSyncSnapshot({ sessionController, workspaceController })
+  const runtime = testRuntime({ sessionController, workspaceController })
+  const result = await readSessionSyncSnapshot(runtime.session, runtime.workspace)
   assert.equal(result.ok, true)
   assert.equal(result.value.protocolVersion, MOBILE_SESSION_SYNC_PROTOCOL_VERSION)
   assert.deepEqual(result.value.sessions, [
@@ -245,15 +265,18 @@ test('snapshot uses workspace baseline archive filtering and a follow cursor for
 
 test('snapshot rejects a remote composite id instead of publishing it as a local session', async () => {
   await assert.rejects(
-    readSessionSyncSnapshot({
-      sessionController: {
+    readSessionSyncSnapshot(...(() => {
+      const runtime = testRuntime({
+        sessionController: {
         list: async () => ({ items: [{ sessionId: 'rh1.aA.bA' }] }),
         follow: () => followSnapshot(1, []),
-      },
-      workspaceController: { follow: () => (async function * () {
-        yield { type: 'baseline', value: { items: [], archivedSessionIds: [] } }
-      })() },
-    }),
+        },
+        workspaceController: { follow: () => (async function * () {
+          yield { type: 'baseline', value: { items: [], archivedSessionIds: [] } }
+        })() },
+      })
+      return [runtime.session, runtime.workspace]
+    })()),
     /rh1 remote composite id/,
   )
 })
@@ -311,14 +334,7 @@ function routeHarness({ sessionController = {}, workspaceController = {}, reques
         return () => routes.delete(route.path)
       },
     },
-    connection: {
-      requestRejection(request) {
-        authRequests.push(request)
-        return requestRejection
-      },
-    },
-    sessionController,
-    workspaceController,
+    runtimeInterface: testRuntime({ sessionController, workspaceController, requestRejection, authRequests }),
     effect(callback) {
       return callback()
     },

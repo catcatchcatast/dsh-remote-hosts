@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — DSH 0.1.5-rc.2 source preview
+
+- Runtime interface, mobile history epoch and streaming adaptation.
+- Managed Windows startup/restart stabilization; Home-only unaccepted candidates are excluded.
+- Sanitized source synchronization only; existing 0.1.2 Release binaries are unchanged.
+
 ## 0.1.2 Preview
 
 - Published the compatibility plugin sources for DeepSeek Harness

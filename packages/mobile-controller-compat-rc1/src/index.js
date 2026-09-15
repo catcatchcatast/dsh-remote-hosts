@@ -6,6 +6,7 @@
  */
 
 import { homedir } from 'node:os'
+import { canonicalToMobileHistoryEvent } from 'dsh-runtime-interface'
 import { dispatchSubagent, MOBILE_SUBAGENT_COMPAT_METHODS } from './subagents.js'
 import { dispatchAuxiliary, MOBILE_AUXILIARY_COMPAT_METHODS } from './auxiliary.js'
 
@@ -15,14 +16,11 @@ const auxiliaryMethods = MOBILE_AUXILIARY_COMPAT_METHODS.filter(method => method
 export const name = 'mobile-controller-compat-rc1'
 export const inject = [
   'webServer',
-  'connection',
-  'sessionController',
-  'workspaceController',
+  'runtimeInterface',
   'agents',
   'agentDefaultModel',
   'agentPresets',
   'directoryPickerController',
-  'subagents',
   'goals',
 ]
 
@@ -97,6 +95,36 @@ export const Config = Object.freeze({
   },
 })
 
+function runtimeOf(ctx) {
+  const runtime = ctx?.runtimeInterface
+  if (!runtime || typeof runtime !== 'object') throw new CapabilityUnavailableError('runtime interface is unavailable')
+  return runtime
+}
+
+function sessionPortOf(ctx, methods = []) {
+  const port = runtimeOf(ctx).session
+  assertController(port, 'runtimeInterface.session', methods)
+  return port
+}
+
+function workspacePortOf(ctx, methods = []) {
+  const port = runtimeOf(ctx).workspace
+  assertController(port, 'runtimeInterface.workspace', methods)
+  return port
+}
+
+function subagentsPortOf(ctx, methods = []) {
+  const port = runtimeOf(ctx).subagents
+  assertController(port, 'runtimeInterface.subagents', methods)
+  return port
+}
+
+function connectionPortOf(ctx) {
+  const port = runtimeOf(ctx).connection
+  assertController(port, 'runtimeInterface.connection', ['requestRejection'])
+  return port
+}
+
 /**
  * Map official SessionHistoryRecord rows to Android history entries.
  *
@@ -139,8 +167,8 @@ export function mapHistoryRecords(records, options, legacyBeforeSeq) {
 export const decodeHistoryRecords = mapHistoryRecords
 
 /** Read one Android-shaped session history value from official controllers. */
-export async function readSessionHistory(sessionController, payload, signal) {
-  assertController(sessionController, 'sessionController', ['follow', 'page'])
+export async function readSessionHistory(sessionPort, payload, signal) {
+  assertController(sessionPort, 'runtimeInterface.session', ['follow', 'page'])
   const request = normalizeHistoryRequest(payload)
   const effectiveSignal = signal ?? new AbortController().signal
   throwIfAborted(effectiveSignal)
@@ -149,7 +177,7 @@ export async function readSessionHistory(sessionController, payload, signal) {
     address,
     ...(request.maxMessages === undefined ? {} : { maxMessages: request.maxMessages }),
   }
-  const source = await sessionController.follow(followRequest, effectiveSignal)
+  const source = await sessionPort.follow(followRequest, effectiveSignal)
   const iterator = await toAsyncIterator(source)
   try {
     const first = await raceAbort(iterator.next(), effectiveSignal)
@@ -170,7 +198,7 @@ export async function readSessionHistory(sessionController, payload, signal) {
         beforeSeq: request.beforeSeq,
         ...(request.maxMessages === undefined ? {} : { maxMessages: request.maxMessages }),
       }
-      const page = unwrapControllerValue(await sessionController.page(pageRequest, effectiveSignal))
+      const page = unwrapControllerValue(await sessionPort.page(pageRequest, effectiveSignal))
       if (!page || typeof page !== 'object' || !Array.isArray(page.records) || typeof page.hasMore !== 'boolean') {
         throw new HistoryMappingError('official history page is malformed')
       }
@@ -195,11 +223,11 @@ export async function readSessionHistory(sessionController, payload, signal) {
 }
 
 /** Read the first complete Workspace baseline as the legacy list value. */
-export async function readWorkspaceList(workspaceController, signal) {
-  assertController(workspaceController, 'workspaceController', ['follow'])
+export async function readWorkspaceList(workspacePort, signal) {
+  assertController(workspacePort, 'runtimeInterface.workspace', ['follow'])
   const effectiveSignal = signal ?? new AbortController().signal
   throwIfAborted(effectiveSignal)
-  const source = await workspaceController.follow(effectiveSignal)
+  const source = await workspacePort.follow(effectiveSignal)
   const iterator = await toAsyncIterator(source)
   try {
     const first = await raceAbort(iterator.next(), effectiveSignal)
@@ -226,12 +254,12 @@ export async function describeHost(ctx, config = {}, signal) {
   const selection = await readDefaultSelection(ctx)
   const attachedSessions = await readAttachedSessionCount(ctx, signal)
   let canOpenPath = false
-  if (typeof ctx.sessionController.canOpenWorkspacePath === 'function') {
-    canOpenPath = Boolean(await ctx.sessionController.canOpenWorkspacePath())
-  }
+  const session = sessionPortOf(ctx)
+  try { canOpenPath = Boolean(await session.canOpenWorkspacePath()) }
+  catch (error) { if (error?.code !== 'runtime-interface/capability-unavailable') throw error }
   if (attachedSessions === undefined) throw new CapabilityUnavailableError('attached session count is unavailable')
   const result = {
-    version: RC1_RUNTIME_VERSION,
+    version: runtimeOf(ctx).upstreamVersion,
     cwd: process.cwd(),
     attachedSessions,
     home: homedir(),
@@ -250,8 +278,7 @@ export async function describeHost(ctx, config = {}, signal) {
 
 /** Adapt the official generation model catalog to Android's boolean `routable`. */
 export async function readSessionModels(ctx, payload, signal) {
-  const controller = ctx?.sessionController
-  assertController(controller, 'sessionController', ['modelCatalog'])
+  const controller = sessionPortOf(ctx, ['modelCatalog'])
   const sessionId = normalizeSessionId(payload?.sessionId)
   throwIfAborted(signal)
   const catalog = unwrapControllerValue(await controller.modelCatalog())
@@ -291,23 +318,14 @@ export async function readAgentPresetCatalog(ctx) {
 
 /** Select an AgentPreset through the official Session Agent and preset service. */
 export async function selectAgentPreset(ctx, payload, signal) {
-  const controller = ctx?.sessionController
-  const presets = ctx?.agentPresets
-  assertController(controller, 'sessionController', ['resolveAgent'])
-  if (!presets || typeof presets.select !== 'function') {
+  const operations = runtimeOf(ctx).agentOperations
+  if (!operations?.agentPresets || typeof operations.agentPresets.select !== 'function') {
     throw new CapabilityUnavailableError('agent preset selection is unavailable')
   }
   const sessionId = normalizeSessionId(payload?.sessionId)
   const agentPreset = requireString(payload?.agentPreset, 'agentPreset')
   throwIfAborted(signal)
-  const resolved = unwrapControllerValue(await controller.resolveAgent(sessionId))
-  if (!resolved || typeof resolved !== 'object') {
-    throw new CapabilityUnavailableError('session Agent is unavailable')
-  }
-  if (resolved.error !== undefined) throw resolved.error
-  const agent = resolved.agent ?? resolved
-  if (!agent) throw new CapabilityUnavailableError('session Agent is unavailable')
-  const selected = unwrapControllerValue(await presets.select(agent, agentPreset))
+  const selected = await operations.agentPresets.select({ sessionId, agentPreset })
   return { agentPreset: typeof selected === 'string' ? selected : agentPreset }
 }
 
@@ -317,6 +335,7 @@ export function apply(ctx, config = {}) {
   if (!ctx || !ctx.webServer || typeof ctx.webServer.register !== 'function') {
     throw new TypeError('webServer is required')
   }
+  connectionPortOf(ctx)
   const register = () => {
     const disposers = []
     try {
@@ -342,10 +361,10 @@ export function apply(ctx, config = {}) {
 
 async function dispatch(ctx, method, payload, signal, rpcId, config) {
   if (auxiliaryMethods.includes(method)) {
-    return dispatchAuxiliary({ sessionController: ctx.sessionController, goals: ctx.goals }, method, payload, signal)
+    return dispatchAuxiliary({ agentOperations: runtimeOf(ctx).agentOperations }, method, payload, signal)
   }
   if (MOBILE_SUBAGENT_COMPAT_METHODS.includes(method)) {
-    return dispatchSubagent({ subagents: ctx.subagents, sessionController: ctx.sessionController, mobileHistoryMapper: mapHistoryRecords }, method, payload, signal, rpcId)
+    return dispatchSubagent({ subagents: subagentsPortOf(ctx), session: sessionPortOf(ctx), mobileHistoryMapper: mapHistoryRecords }, method, payload, signal, rpcId)
   }
   switch (method) {
     case 'host.describe':
@@ -359,7 +378,7 @@ async function dispatch(ctx, method, payload, signal, rpcId, config) {
 
     case 'workspace.list':
       expectObject(payload)
-      return readWorkspaceList(ctx.workspaceController, signal)
+      return readWorkspaceList(workspacePortOf(ctx, ['follow']), signal)
     case 'workspace.create':
       return invokeWorkspace(ctx, 'create', { path: requireString(payload?.path, 'path') })
     case 'workspace.rename':
@@ -406,7 +425,7 @@ async function dispatch(ctx, method, payload, signal, rpcId, config) {
         atSeq: optionalSequence(payload?.atSeq, 'atSeq', 0),
       }))
     case 'session.history':
-      return readSessionHistory(ctx.sessionController, payload, signal)
+      return readSessionHistory(sessionPortOf(ctx, ['follow', 'page']), payload, signal)
     case 'session.prompt':
       return invokeSession(ctx, 'prompt', {
         // Android's envelope rpcId is the only client-minted correlation id;
@@ -453,15 +472,13 @@ async function dispatch(ctx, method, payload, signal, rpcId, config) {
 }
 
 function invokeSession(ctx, method, request, signal) {
-  const controller = ctx?.sessionController
-  assertController(controller, 'sessionController', [method])
+  const controller = sessionPortOf(ctx, [method])
   const args = signal === undefined ? [request] : [request, signal]
   return Promise.resolve(controller[method](...args)).then(unwrapControllerValue)
 }
 
 async function readSessionList(ctx, request, signal) {
-  const controller = ctx?.sessionController
-  assertController(controller, 'sessionController', ['list'])
+  const controller = sessionPortOf(ctx, ['list'])
   const value = unwrapControllerValue(await controller.list(request, signal))
   if (!value || typeof value !== 'object' || !Array.isArray(value.items)) return value
   return {
@@ -475,8 +492,7 @@ async function readSessionList(ctx, request, signal) {
 }
 
 function invokeWorkspace(ctx, method, request) {
-  const controller = ctx?.workspaceController
-  assertController(controller, 'workspaceController', [method])
+  const controller = workspacePortOf(ctx, [method])
   return Promise.resolve(controller[method](request)).then(unwrapControllerValue)
 }
 
@@ -498,14 +514,17 @@ async function handleJsonRequest(ctx, method, req, res, config) {
   let rpcId = 'invalid'
   try {
     const body = await raceAbort(readBody(req, config.maxRequestBytes, lifetime.signal), lifetime.signal)
-    const message = JSON.parse(body)
-    rpcId = normalizeRpcId(message?.rpcId) ?? 'invalid'
-    if (message?.type !== 'client-request' || message?.method !== method || !isPlainObject(message?.payload)) {
-      sendJson(res, 400, serverFailure(rpcId, new BadRequestError(`invalid ${method} request`)), config.maxResponseBytes)
-      return
-    }
+    const ingress = runtimeOf(ctx).decodeMobileIngress({
+      route: method,
+      body,
+      headers: req.headers,
+      type: 'client-request',
+      method,
+      requirePayloadObject: true,
+    })
+    rpcId = ingress.rpcId
     const value = await raceAbort(
-      dispatch(ctx, method, message.payload, lifetime.signal, rpcId, config),
+      dispatch(ctx, method, ingress.payload, lifetime.signal, rpcId, config),
       lifetime.signal,
     )
     if (lifetime.timedOut) {
@@ -536,8 +555,8 @@ async function handleJsonRequest(ctx, method, req, res, config) {
 }
 
 function authorizeHttpRequest(ctx, req, res, maxResponseBytes) {
-  const connection = ctx?.connection
-  if (!connection || typeof connection.requestRejection !== 'function') {
+  let connection
+  try { connection = connectionPortOf(ctx) } catch {
     sendJson(res, 503, { error: 'authentication unavailable' }, maxResponseBytes)
     return false
   }
@@ -665,7 +684,7 @@ async function readAttachedSessionCount(ctx, signal) {
 }
 
 async function readSessionSelection(ctx, controller, sessionId, catalog, signal) {
-  assertController(controller, 'sessionController', ['follow'])
+  assertController(controller, 'runtimeInterface.session', ['follow'])
   const effectiveSignal = signal ?? new AbortController().signal
   const iterator = await toAsyncIterator(await controller.follow({
     address: { kind: 'session', sessionId }, maxMessages: 1,
@@ -796,68 +815,19 @@ function unwrapControllerValue(value) {
 function decodeHistoryRecord(record) {
   if (!isPlainObject(record)) throw new HistoryMappingError('unsupported history record')
   if (record.type === 'event') {
-    if (!isPlainObject(record.event) || typeof record.event.type !== 'string'
-        || !isSequence(record.event.seq) || !Number.isSafeInteger(record.event.time)) {
+    const event = canonicalEventForMobileHistory(record.event)
+    if (!isPlainObject(event) || typeof event.type !== 'string'
+        || !isSequence(event.seq) || !Number.isSafeInteger(event.time)) {
       throw new HistoryMappingError('unsupported event record')
     }
-    return [copyHistoryEntry(record.event, record.view)]
+    return [copyHistoryEntry(event, record.view)]
   }
-  if (record.type !== 'chunks') throw new HistoryMappingError('unsupported history record')
-  return expandChunkRun(record.event, record.view)
+  throw new HistoryMappingError('unsupported history record')
 }
 
-function expandChunkRun(event, view) {
-  if (!isPlainObject(event) || typeof event.type !== 'string'
-      || !isSequence(event.seq) || !Number.isSafeInteger(event.time) || !isPlainObject(event.data)) {
-    throw new HistoryMappingError('unsupported chunk row')
-  }
-  const isTool = event.type === 'chunkrow/tool-call-chunks'
-  if (!isTool && event.type !== 'chunkrow/text-chunks' && event.type !== 'chunkrow/reasoning-chunks') {
-    throw new HistoryMappingError('unsupported chunk row type')
-  }
-  const data = event.data
-  const parts = isTool ? data.args : data.texts
-  if (!Array.isArray(parts) || parts.length === 0 || parts.some(part => typeof part !== 'string')) {
-    throw new HistoryMappingError('chunk row payload is invalid')
-  }
-  if (!Array.isArray(data.dt) || data.dt.length !== parts.length - 1
-      || data.dt.some(delta => !Number.isSafeInteger(delta))) {
-    throw new HistoryMappingError('chunk row timing is invalid')
-  }
-  if (!Number.isSafeInteger(data.turn) || !Number.isSafeInteger(data.step) || !Number.isSafeInteger(data.index)) {
-    throw new HistoryMappingError('chunk row coordinates are invalid')
-  }
-  if (isTool && (typeof data.id !== 'string' || data.id.length === 0)) {
-    throw new HistoryMappingError('tool chunk row id is invalid')
-  }
-  if (isTool && data.name !== undefined && typeof data.name !== 'string') {
-    throw new HistoryMappingError('tool chunk row name is invalid')
-  }
-  const entries = []
-  let time = event.time
-  for (let index = 0; index < parts.length; index += 1) {
-    if (index > 0) time += data.dt[index - 1]
-    const seq = event.seq + index
-    if (!isSequence(seq) || !Number.isSafeInteger(time)) throw new HistoryMappingError('chunk row exceeds sequence bounds')
-    const chunk = event.type === 'chunkrow/text-chunks'
-      ? { type: 'text-delta', index: data.index, text: parts[index] }
-      : event.type === 'chunkrow/reasoning-chunks'
-        ? { type: 'reasoning-delta', index: data.index, text: parts[index] }
-        : {
-            type: 'tool-call-delta',
-            index: data.index,
-            id: data.id,
-            ...(data.name === undefined ? {} : { name: data.name }),
-            argumentsDelta: parts[index],
-          }
-    entries.push(copyHistoryEntry({
-      type: 'assistant/chunk',
-      seq,
-      time,
-      data: { turn: data.turn, step: data.step, chunk },
-    }, view))
-  }
-  return entries
+/** The interface owns legacy packed history; this only emits v2 stable data. */
+function canonicalEventForMobileHistory(event) {
+  return canonicalToMobileHistoryEvent(event)
 }
 
 function copyHistoryEntry(event, view) {
@@ -1000,6 +970,8 @@ function safeErrorCode(error) {
   if (error instanceof CapabilityUnavailableError) return 'gateway/capability-unavailable'
   if (error instanceof HistoryMappingError) return 'gateway/history-unsupported'
   if (error instanceof RequestTooLargeError) return 'gateway/request-too-large'
+  if (error?.code === 'runtime-interface/capability-unavailable') return 'gateway/capability-unavailable'
+  if (error?.code === 'history-format-incompatible') return 'gateway/history-unsupported'
   if (error?.name === 'ApiSessionNotFound') return 'session/not-found'
   const candidate = typeof error?.code === 'string' ? error.code : undefined
   if (candidate && /^[a-z][a-z0-9-]{0,48}\/[a-z][a-z0-9-]{0,64}$/.test(candidate)) return candidate

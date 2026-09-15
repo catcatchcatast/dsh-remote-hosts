@@ -1,6 +1,6 @@
 # Compatibility contract
 
-This snapshot targets DSH `0.1.2-rc.1` and does not modify `dsh-core`.
+This source snapshot targets DSH `0.1.5-rc.2` with retained `0.1.2-rc.1` compatibility paths and does not modify `dsh-core`.
 
 | Area | Required behavior |
 | --- | --- |
@@ -16,8 +16,8 @@ DSH package names and injection seams are prerelease interfaces. Treat every
 other release candidate as incompatible until the tests and a manual smoke test
 have passed against that exact runtime.
 
-The publication workspace contains only the packages used by the rc.1 release
+The publication workspace contains the packages selected by `release-profile.json` for the rc.2 source preview
 and its deployed follow-up fixes. Earlier prerelease prototypes are excluded.
 The isolated `compat/android-bootstrap-mobile-session-sync` package is retained
 solely because the Android client embeds that fallback for older hosts; it is
-not loaded by the formal rc.1 profile.
+not loaded by the current profile and is excluded from the active pnpm workspace.

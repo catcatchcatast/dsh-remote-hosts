@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "exceptions": [
+    {
+      "file": "packages/rc1-host-carriers/src/index.js",
+      "ruleId": "carrier-raw",
+      "expressionHash": "09a9c1ad381ade61f133e7e7ef8f27ca4fc31244fdcf9a57662e4a0f559ef3ca",
+      "reason": "远端文件代理专用 raw 供应入口；会话 call/open 已经接口层，只有既有 file-proxy 消费此句柄"
+    },
+    {
+      "file": "packages/rc1-host-carriers/src/index.js",
+      "ruleId": "carrier-raw",
+      "expressionHash": "e117485a9cbfd4f84b90dda417da3ad53e056e19e0efa4487a82b7747edc9dd2",
+      "reason": "本机文件代理专用 raw 供应入口，与远端复用旧文件传输；不得供会话或历史读取使用"
+    },
+    {
+      "file": "packages/rc1-host-carriers/src/lazy-carrier.js",
+      "ruleId": "carrier-raw",
+      "expressionHash": "9a65d62e0437db5015e907ae16fa1e185ce7e25cf348256087bef47e2891f3fa",
+      "reason": "既有文件代理载体的延迟连接及认证失效处理；仅此原始文件请求调用点保留"
+    },
+    {
+      "file": "packages/browser-host-hub-rc1/src/file-proxy.js",
+      "ruleId": "carrier-raw",
+      "expressionHash": "f3cacc00ad6854ee0880f41a6f11f71b9c8492deab77a4e3352032c14ad3bbd9"
+    },
+    {
+      "file": "packages/browser-host-hub-rc1/src/file-proxy.js",
+      "ruleId": "carrier-raw",
+      "expressionHash": "93b8bd4a98ad1502fdc09551510d81064daef755ae210ce839432d563763c6ae"
+    },
+    {
+      "file": "packages/model-menu-filter/src/index.js",
+      "ruleId": "inject-official-service",
+      "expressionHash": "23b4fc15707f49ac4449c277cb1d6590102c185e8933d52ece7e1101c50e9e17"
+    },
+    {
+      "file": "packages/model-menu-filter/src/index.js",
+      "ruleId": "context-service-access",
+      "expressionHash": "a993a00f4086d79535d6445a4186c884d09cc340d616f2bb00ec7184adea2b9a"
+    }
+  ]
+}

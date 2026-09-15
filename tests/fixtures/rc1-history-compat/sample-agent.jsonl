@@ -1,0 +1,2 @@
+{"type":"session","version":0,"id":"synthetic-agent","createdAt":1700000000020,"parentSession":"synthetic-parent","origin":"subagent","delegationDepth":2,"agentPreset":"standard"}
+{"type":"session/end-seed","seq":0,"time":1700000000021,"data":{}}

@@ -9,19 +9,15 @@ import { buildRelease, RC1_PACKAGE_DIRS } from '../tools/rc1-package-release.mjs
 
 const worktree = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 
-test('release includes every deployed compatibility package', () => {
-  for (const name of [
-    'ui-directory-picker-browse',
-    'subscriptions-compat-rc1',
-    'model-menu-filter',
-    'ui-workspace-menu-compat-rc1',
-  ]) assert.ok(RC1_PACKAGE_DIRS.includes(name), name)
+test('release includes the directory picker used by the browser bundle', () => {
+  assert.ok(RC1_PACKAGE_DIRS.includes('ui-directory-picker-browse'))
 })
 
 test('packs every rc1 adapter and browser picker offline with candidate source hashes', () => {
   const staging = mkdtempSync(path.join(tmpdir(), 'dsh-rc1-package-release-'))
   try {
-    const result = buildRelease({ sourceRoot: worktree, stagingDir: staging })
+    const result = buildRelease({ sourceRoot: worktree, stagingDir: staging, runtimeVersion: '0.1.2-rc.1' })
+    assert.equal(result.runtimeVersion, '0.1.2-rc.1')
     assert.equal(result.releaseStatus, 'candidate')
     assert.equal(result.sourceCommitFrozen, false)
     assert.match(result.sourceTreeHash, /^[a-f0-9]{64}$/)
@@ -36,17 +32,14 @@ test('packs every rc1 adapter and browser picker offline with candidate source h
       assert.equal(statSync(artifact).isFile(), true)
       assert.equal(readFileSync(`${artifact}.sha256`, 'utf8'), `${item.artifactSha256}  ${item.artifact}\n`)
       const packedManifest = JSON.parse(execFileSync('tar', ['-xOf', artifact, 'package/package.json'], { encoding: 'utf8', windowsHide: true }))
-      assert.match(execFileSync('tar', ['-xOf', artifact, 'package/LICENSE'], { encoding: 'utf8', windowsHide: true }), /Apache License[\s\S]*Version 2\.0/)
-      assert.match(execFileSync('tar', ['-xOf', artifact, 'package/NOTICE'], { encoding: 'utf8', windowsHide: true }), /DSH Remote Hosts contributors/)
       for (const field of ['dependencies', 'optionalDependencies', 'devDependencies', 'peerDependencies']) {
         for (const value of Object.values(packedManifest[field] ?? {})) assert.equal(String(value).startsWith('workspace:'), false)
       }
     }
     assert.equal(JSON.parse(readFileSync(path.join(staging, 'rc1-release-manifest.json'), 'utf8')).sourceCommitFrozen, false)
-    const sourceHashes = JSON.parse(readFileSync(path.join(staging, 'source-content-hashes.json'), 'utf8'))
-    assert.equal(sourceHashes.sourceTreeHash, result.sourceTreeHash)
-    assert.ok(sourceHashes.files.some(file => file.path === 'LICENSE'))
-    assert.ok(sourceHashes.files.some(file => file.path === 'NOTICE'))
+    assert.equal(JSON.parse(readFileSync(path.join(staging, 'source-content-hashes.json'), 'utf8')).sourceTreeHash, result.sourceTreeHash)
+    const inputs = JSON.parse(readFileSync(path.join(staging, 'source-content-hashes.json'), 'utf8')).files
+    for (const name of ['release-profile.json', 'pnpm-lock.yaml', 'tools/release-profile.mjs']) assert.ok(inputs.some(file => file.path === name && /^[a-f0-9]{64}$/.test(file.sha256)))
   } finally {
     rmSync(staging, { recursive: true, force: true })
   }

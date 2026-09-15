@@ -1,6 +1,8 @@
 import { createFileProxyHandler, fileProxyBootstrap, FILE_PROXY_PREFIX } from './file-proxy.js'
 import { readBootstrapHostInventory, registerHostInventory } from './host-selector.js'
 import { BROWSER_STREAM_PATH, registerStreamMux, serveStreamSocket } from './stream-mux.js'
+import { CURRENT_RUNTIME_VERSION, LEGACY_RUNTIME_VERSION, canonicalToBrowserWire, createBrowserStreamEncoder, normalizeRuntimeVersion, upstreamToCanonicalWire, wrapHostCarrier } from 'dsh-runtime-interface'
+import { decodeBrowserRequest, encodeBrowserResponse } from 'dsh-runtime-interface/browser'
 
 export { BROWSER_STREAM_PATH, registerStreamMux, serveStreamSocket } from './stream-mux.js'
 
@@ -24,7 +26,7 @@ export const name = 'browser-host-hub-rc1'
 // `perHost` is supplied by the server-side carrier package.  The other two
 // services are intentionally injected instead of discovered from the global
 // object so the BFF keeps the official auth and web-server ownership.
-export const inject = ['perHost', 'webServer', 'connection']
+export const inject = ['perHost', 'webServer', 'runtimeInterface']
 
 /**
  * Deliberately finite: this is the only RPC surface the browser hook may proxy.
@@ -567,12 +569,24 @@ export function mapSessionFollowFrame(frame, hostId, codec = undefined) {
   const header = { ...frame.header }
   if (typeof header.id === 'string') header.id = normalized.encodeCompositeId(hostId, header.id)
   if (typeof header.parentSession === 'string') header.parentSession = normalized.encodeCompositeId(hostId, header.parentSession)
-  // records and projections are intentionally preserved byte-for-byte.
+  // The carrier has already converted its upstream records through the
+  // runtime interface.  This mapping only scopes Host identities.
   return { ...frame, header }
 }
 
-/** Session page/history records are opaque wire payloads and must not be rewritten. */
-export function mapHistoryRecords(records) { return records }
+/**
+ * Carriers are converted before this Hub maps Host IDs. Direct helper callers
+ * may explicitly supply a source version, but the normal Hub path preserves
+ * the already-targeted record objects and their opaque data references.
+ */
+export function mapHistoryRecords(records, { upstreamVersion, hostId, browserVersion = LEGACY_RUNTIME_VERSION } = {}) {
+  if (!Array.isArray(records) || upstreamVersion === undefined) return records
+  return canonicalToBrowserWire(upstreamToCanonicalWire({ records }, {
+    upstreamVersion,
+    hostId,
+    endpoint: 'session/page',
+  }), browserVersion).records
+}
 export const decodeHistoryRecords = mapHistoryRecords
 
 function mapSessionListItem(item, hostId, codec) {
@@ -914,17 +928,11 @@ function rejectionResponse(response, rejection) {
   } else writeResponse(response, 503, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' }, 'service unavailable')
 }
 
-function validateClientRequest(message, endpoint) {
-  if (!isRecord(message) || message.type !== 'client-request' || typeof message.rpcId !== 'string' || message.rpcId.length === 0 || message.method !== endpoint) throw new BrowserHostHubError('browser-host-hub-rc1/invalid-request', 'Invalid client-request envelope', { endpoint })
-  return message
-}
-
 /** Handle one authenticated official `/api/<endpoint>` BFF request. */
 export async function handleBffRequest(ctx, hub, endpoint, request, response, options = {}) {
-  const connection = ctx?.connection
-  if (!connection || typeof connection.requestRejection !== 'function') throw new TypeError('connection.requestRejection is required')
+  if (typeof ctx?.authorizeRequest !== 'function') throw new TypeError('interface authorization port is required')
   let rejection
-  try { rejection = await connection.requestRejection(request) } catch { rejection = 503 }
+  try { rejection = await ctx.authorizeRequest(request) } catch { rejection = 503 }
   if (rejection !== undefined) { rejectionResponse(response, rejection); return }
   if (!ALLOWLIST.has(endpoint)) { writeResponse(response, 404, { 'Cache-Control': 'no-store' }); return }
   const method = String(request?.method ?? '').toUpperCase()
@@ -943,7 +951,7 @@ export async function handleBffRequest(ctx, hub, endpoint, request, response, op
   let headersWritten = false
   try {
     const body = await readBffBody(request, maxRequestBytes, lifetime.signal)
-    const message = validateClientRequest(JSON.parse(body), endpoint)
+    const message = decodeBrowserRequest(JSON.parse(body), endpoint)
     if (STREAM_ENDPOINTS.has(endpoint)) {
       const stream = hub.openStream(endpoint, message.payload, lifetime.signal)
       startResponse(response, 200, {
@@ -964,7 +972,7 @@ export async function handleBffRequest(ctx, hub, endpoint, request, response, op
     }
     const result = await hub.call(endpoint, message.payload, lifetime.signal)
     if (!isRecord(result) || typeof result.ok !== 'boolean') throw new TypeError('Hub returned an invalid RPC result')
-    const envelope = { type: 'server-response', rpcId: message.rpcId, result }
+    const envelope = encodeBrowserResponse(message.rpcId, result)
     const encoded = jsonBytes(envelope)
     if (encoded.bytes.byteLength > maxResponseBytes) throw new BrowserHostHubError('browser-host-hub-rc1/response-too-large', 'RPC response exceeds the configured limit', { maxResponseBytes })
     writeResponse(response, 200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }, encoded.text)
@@ -986,10 +994,9 @@ export async function handleBffRequest(ctx, hub, endpoint, request, response, op
 
 function bootstrapScriptResponse(ctx, request, response, createScript) {
   return (async () => {
-    const connection = ctx?.connection
-    if (!connection || typeof connection.requestRejection !== 'function') throw new TypeError('connection.requestRejection is required')
+    if (typeof ctx?.authorizeRequest !== 'function') throw new TypeError('interface authorization port is required')
     let rejection
-    try { rejection = await connection.requestRejection(request) } catch { rejection = 503 }
+    try { rejection = await ctx.authorizeRequest(request) } catch { rejection = 503 }
     if (rejection !== undefined) { rejectionResponse(response, rejection); return }
     if (String(request?.method ?? '').toUpperCase() !== 'GET') {
       writeResponse(response, 405, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', Allow: 'GET' }, 'method not allowed')
@@ -1008,7 +1015,7 @@ function bootstrapScriptResponse(ctx, request, response, createScript) {
 /** Register the exact BFF routes. No arbitrary endpoint or proxy URL is exposed. */
 export function registerBff(ctx, hub, options = {}) {
   if (!ctx?.webServer || typeof ctx.webServer.register !== 'function') throw new TypeError('webServer.register is required')
-  if (!ctx?.connection || typeof ctx.connection.requestRejection !== 'function') throw new TypeError('connection.requestRejection is required')
+  if (typeof ctx?.authorizeRequest !== 'function') throw new TypeError('interface authorization port is required')
   // `apiPrefix` remains the legacy one-prefix override.  With no override the
   // browser accepts the official `/api` input, while this BFF owns an
   // independent prefix so its Host carriers can still call official `/api`
@@ -1069,7 +1076,11 @@ export function createBrowserBootstrapScript(options = {}) {
   const API_PREFIX=${scriptLiteral(browserApiPrefix)};
   const BFF_PREFIX=${scriptLiteral(bffApiPrefix)};
   const STREAM_PATH=${scriptLiteral(streamPath)};
-  const DIRECT_CHANNELS=Object.freeze(['/codex-subscription/','/subscriptions-auth/']);
+  const DIRECT_CHANNELS=Object.freeze([
+    {prefix:'/codex-subscription/',kind:'subscription'},
+    {prefix:'/subscriptions-auth/',kind:'subscription'},
+    {prefix:'/remote-hosts/',kind:'management'}
+  ]);
   const SELECTOR=${scriptLiteral(HOST_SELECTOR)};
   const ALLOWLIST=new Set(${scriptLiteral(HOST_RPC_ALLOWLIST)});
   const STREAM_ENDPOINTS=new Set(${scriptLiteral([...STREAM_ENDPOINTS])});
@@ -1104,10 +1115,10 @@ export function createBrowserBootstrapScript(options = {}) {
     const url=new URL(raw, globalThis.location && globalThis.location.href || 'http://dsh.invalid/');
     if(globalThis.location && url.origin!==globalThis.location.origin) throw new TypeError('transport URL origin is not allowed');
     for(const channel of DIRECT_CHANNELS){
-      if(url.pathname.startsWith(channel)){
-        const endpoint=decodeURIComponent(url.pathname.slice(channel.length));
-        if(endpoint.length===0 || url.pathname!==channel+endpoint) throw new TypeError('subscription transport path is not allowed');
-        return {url,endpoint,direct:true};
+      if(url.pathname.startsWith(channel.prefix)){
+        const endpoint=decodeURIComponent(url.pathname.slice(channel.prefix.length));
+        if(endpoint.length===0 || url.pathname!==channel.prefix+endpoint) throw new TypeError(channel.kind+' transport path is not allowed');
+        return {url,endpoint,direct:true,kind:channel.kind};
       }
     }
     if(!url.pathname.startsWith(API_PREFIX+'/')) throw new TypeError('transport path is not allowed');
@@ -1116,13 +1127,14 @@ export function createBrowserBootstrapScript(options = {}) {
     return {url,endpoint};
   };
   const validateDirectRequest=(target,init)=>{
+    const label=target.kind;
     const body=init && own(init,'body') ? init.body : undefined;
-    if(typeof body!=='string') throw new TypeError('subscription transport request body must be JSON');
+    if(typeof body!=='string') throw new TypeError(label+' transport request body must be JSON');
     let message;
-    try{message=JSON.parse(body);}catch{throw new TypeError('subscription transport request body must be JSON');}
+    try{message=JSON.parse(body);}catch{throw new TypeError(label+' transport request body must be JSON');}
     const method=String(init && own(init,'method') ? init.method : 'GET').toUpperCase();
-    if(method!=='POST') throw new TypeError('subscription transport requires POST');
-    if(!message || message.type!=='client-request' || typeof message.rpcId!=='string' || message.rpcId.length===0 || message.method!==target.endpoint) throw new TypeError('invalid subscription client-request envelope');
+    if(method!=='POST') throw new TypeError(label+' transport requires POST');
+    if(!message || message.type!=='client-request' || typeof message.rpcId!=='string' || message.rpcId.length===0 || message.method!==target.endpoint) throw new TypeError('invalid '+label+' client-request envelope');
   };
   const decorate=(target,init)=>{
     const body=init && own(init,'body') ? init.body : undefined;
@@ -1317,6 +1329,8 @@ export function registerBrowserBootstrap(ctx, options = {}) {
 
 export class BrowserHostHub {
   #perHost
+  #runtimeInterface
+  #browserVersion
   #codec
   #selectedHost
   #listeners = new Set()
@@ -1338,6 +1352,9 @@ export class BrowserHostHub {
   constructor(options = {}) {
     if (!isRecord(options) || options.perHost === undefined) throw new TypeError('perHost carrier map is required')
     this.#perHost = options.perHost
+    if (options.runtimeInterface !== undefined && (typeof options.runtimeInterface?.wrapHostCarrier !== 'function' || typeof options.runtimeInterface?.encodeBrowser !== 'function')) throw new TypeError('runtimeInterface.wrapHostCarrier/encodeBrowser must be functions')
+    this.#runtimeInterface = options.runtimeInterface
+    this.#browserVersion = normalizeRuntimeVersion(options.browserVersion ?? options.runtimeInterface?.browserVersion ?? LEGACY_RUNTIME_VERSION)
     this.#codec = normalizeCodec(options.codec)
     this.#selectedHost = options.selectedHost
     if (this.#selectedHost !== undefined && (typeof this.#selectedHost !== 'string' || this.#selectedHost.length === 0)) throw new TypeError('selectedHost must be a non-empty string')
@@ -1382,7 +1399,14 @@ export class BrowserHostHub {
       assertString(hostId, 'hostId')
       const carrier = isRecord(value) && own(value, 'carrier') && isRecord(value.carrier) ? value.carrier : value
       if (!isRecord(carrier) || typeof carrier.call !== 'function' || typeof carrier.open !== 'function') throw new TypeError(`perHost[${hostId}] must expose call/open`)
-      return { hostId, carrier }
+      if (carrier.runtimeInterfaceCarrier === true) return { hostId, carrier }
+      const upstreamVersion = typeof value?.upstreamVersion === 'string'
+        ? value.upstreamVersion
+        : typeof carrier.upstreamVersion === 'string'
+          ? carrier.upstreamVersion
+          : this.#runtimeInterface?.upstreamVersion ?? this.#browserVersion
+      const factory = this.#runtimeInterface?.wrapHostCarrier?.bind(this.#runtimeInterface) ?? wrapHostCarrier
+      return { hostId, carrier: factory({ hostId, carrier, upstreamVersion }) }
     })
   }
 
@@ -1390,6 +1414,11 @@ export class BrowserHostHub {
     const entry = this.#entries().find(candidate => candidate.hostId === hostId)
     if (entry === undefined) throw new HostUnavailableError(hostId)
     return entry
+  }
+
+  #encodeBrowser(value) {
+    return this.#runtimeInterface?.encodeBrowser?.(value, this.#browserVersion)
+      ?? canonicalToBrowserWire(value, this.#browserVersion)
   }
 
   #selectHost(endpoint, payload) {
@@ -1414,7 +1443,7 @@ export class BrowserHostHub {
       const entry = this.#entry(hostId)
       const result = resultOfCarrier(await entry.carrier.call(endpoint, mapPayloadForHost(endpoint, payload, hostId, this.#codec), signal))
       if (result.ok !== true) return result
-      const value = mapUnaryValue(endpoint, result.value, hostId, this.#codec)
+      const value = this.#encodeBrowser(mapUnaryValue(endpoint, result.value, hostId, this.#codec))
       if (endpoint === 'workspace/archiveSession') this.#recordArchivedSessionIds(hostId, value?.archivedSessionIds)
       return { ok: true, value }
     } catch (error) {
@@ -1628,7 +1657,8 @@ export class BrowserHostHub {
       // The browser uses the official Typert payload envelope (`args`), while
       // the injected Host carrier already targets the endpoint's decoded
       // method and therefore receives the named parameters directly.
-      return resultOfCarrier(await entry.carrier.call(EVENT_RESULT_ENDPOINT, { args: { clientId: mapping.remoteClientId, eventId: mapping.remoteEventId, outcome: args.outcome } }, abortSignalOf(signal)))
+      const result = resultOfCarrier(await entry.carrier.call(EVENT_RESULT_ENDPOINT, { args: { clientId: mapping.remoteClientId, eventId: mapping.remoteEventId, outcome: args.outcome } }, abortSignalOf(signal)))
+      return result.ok === true ? { ok: true, value: this.#encodeBrowser(result.value) } : result
     } catch (error) {
       return failure(error)
     }
@@ -1642,7 +1672,7 @@ export class BrowserHostHub {
         const source = await entry.carrier.open(endpoint, mapPayloadForHost(endpoint, payload, hostId, this.#codec), signal)
         let generationBaseline = false
         for await (const raw of source) {
-          const frame = mapper(raw, hostId)
+          const frame = this.#encodeBrowser(mapper(raw, hostId))
           if (!generationBaseline) {
             if (frame?.type !== 'baseline') throw new TypeError(`${endpoint} generation must begin with baseline`)
             generationBaseline = true
@@ -1735,6 +1765,13 @@ export class BrowserHostHub {
     let hasSnapshot = false
     let bootstrapTimedOut = false
     let bootstrapTimer
+    const makeStreamEncoder = this.#runtimeInterface?.createBrowserStreamEncoder?.bind(this.#runtimeInterface) ?? createBrowserStreamEncoder
+    const streamEncoder = makeStreamEncoder({
+      upstreamVersion: CURRENT_RUNTIME_VERSION,
+      targetVersion: this.#browserVersion,
+      request: payload,
+      encodeFrame: value => this.#encodeBrowser(value),
+    })
     const timeoutBootstrap = () => { bootstrapTimedOut = true; lifetime.abort() }
     bootstrapTimer = setTimeout(timeoutBootstrap, this.#sessionBootstrapTimeoutMs)
     try {
@@ -1745,15 +1782,18 @@ export class BrowserHostHub {
           let generationBaseline = false
           for await (const raw of source) {
             if (outerSignal.aborted) break
-            const frame = mapper(raw, hostId)
-            if (!generationBaseline) {
-              if (frame?.type !== 'snapshot') throw new SessionFollowBootstrapError(hostId, 'invalid-first-frame')
-              generationBaseline = true
-              hasSnapshot = true
-              clearTimeout(bootstrapTimer)
-              bootstrapTimer = undefined
+            const canonical = mapper(raw, hostId)
+            for (const frame of streamEncoder.push(canonical)) {
+              if (outerSignal.aborted) break
+              if (!generationBaseline) {
+                if (frame?.type !== 'snapshot') throw new SessionFollowBootstrapError(hostId, 'invalid-first-frame')
+                generationBaseline = true
+                hasSnapshot = true
+                clearTimeout(bootstrapTimer)
+                bootstrapTimer = undefined
+              }
+              yield frame
             }
-            yield frame
           }
           if (!hasSnapshot && !outerSignal.aborted) throw new SessionFollowBootstrapError(hostId, 'stream-ended-before-snapshot')
           break
@@ -1774,6 +1814,7 @@ export class BrowserHostHub {
       clearTimeout(bootstrapTimer)
       outerSignal.removeEventListener('abort', stop)
       lifetime.abort()
+      streamEncoder.close?.()
     }
   }
 
@@ -1922,9 +1963,9 @@ export class BrowserHostHub {
       if (typeof body !== 'string') return errorResponse(400, new BrowserHostHubError('browser-host-hub-rc1/invalid-request', 'Transport request body must be JSON'))
       let message
       try { message = JSON.parse(body) } catch { return errorResponse(400, new BrowserHostHubError('browser-host-hub-rc1/invalid-request', 'Request body must be valid JSON')) }
-      if (!isRecord(message) || message.type !== 'client-request' || typeof message.rpcId !== 'string' || message.rpcId.length === 0 || message.method !== endpoint) return errorResponse(400, new BrowserHostHubError('browser-host-hub-rc1/invalid-request', 'Invalid client-request envelope'))
+      message = decodeBrowserRequest(message, endpoint)
       const result = await this.call(endpoint, message.payload, init.signal)
-      return new Response(JSON.stringify({ type: 'server-response', rpcId: message.rpcId, result }), { status: 200, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } })
+      return new Response(JSON.stringify(encodeBrowserResponse(message.rpcId, result)), { status: 200, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } })
     } catch (error) {
       return errorResponse(error instanceof HostRpcNotAllowedError ? 404 : 400, error)
     }
@@ -1955,16 +1996,19 @@ export function createTransportHook(hub) {
 /** Cordis entry point; Root supplies the authenticated server-side perHost map. */
 export function apply(ctx, options = {}) {
   if (!ctx || !ctx.webServer || typeof ctx.webServer.register !== 'function') throw new TypeError('webServer.register is required')
-  if (!ctx.connection || typeof ctx.connection.requestRejection !== 'function') throw new TypeError('connection.requestRejection is required')
+  const runtimeInterface = options.runtimeInterface ?? ctx.runtimeInterface
+  if (!runtimeInterface || typeof runtimeInterface.wrapHostCarrier !== 'function' || typeof runtimeInterface.encodeBrowser !== 'function' || !runtimeInterface.connection || typeof runtimeInterface.connection.requestRejection !== 'function') throw new TypeError('runtimeInterface with connection/wrapHostCarrier/encodeBrowser is required')
   const perHost = options.perHost === undefined ? ctx.perHost : options.perHost
-  const hub = new BrowserHostHub({ ...options, perHost })
+  const webRuntime = { webServer: ctx.webServer, authorizeRequest: request => runtimeInterface.connection.requestRejection(request) }
+  const hub = new BrowserHostHub({ ...options, perHost, runtimeInterface })
   const register = () => {
     const disposers = []
     try {
-      if (options.registerBff !== false) disposers.push(registerBff(ctx, hub, { ...options, perHost }))
-      disposers.push(registerHostInventory(ctx, perHost))
-      disposers.push(ctx.webServer.register({ kind: 'prefix', path: FILE_PROXY_PREFIX, handler: createFileProxyHandler(ctx.connection, perHost, decodeCompositeId) }))
-      if (options.injectBootstrap !== false) disposers.push(registerBrowserBootstrap(ctx, options))
+      if (options.registerBff !== false) disposers.push(registerBff(webRuntime, hub, { ...options, perHost }))
+      disposers.push(registerHostInventory(webRuntime, perHost))
+      // 存量例外：file-proxy.js 的 raw file carrier 调用受其专属安全边界保护；会话、历史和控制流不走该路径。
+      disposers.push(ctx.webServer.register({ kind: 'prefix', path: FILE_PROXY_PREFIX, handler: createFileProxyHandler(runtimeInterface.connection, perHost, decodeCompositeId) }))
+      if (options.injectBootstrap !== false) disposers.push(registerBrowserBootstrap({ on: ctx.on?.bind(ctx) }, options))
       // This opt-in is only for a Node-side harness. In production the actual
       // browser gets the hook from the protected script-src route above; do
       // not mutate the server's global object by default.

@@ -50,6 +50,7 @@ export function lazyCarrier(connect, lifetime) {
   lifetime.addEventListener('abort', close, { once: true })
   return {
     getState() { return phase },
+    async connect(signal) { await forCaller(signal); return phase },
     async raw(path, init = {}) {
       const entry = await forCaller(init.signal)
       init.signal?.throwIfAborted()

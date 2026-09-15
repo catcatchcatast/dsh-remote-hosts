@@ -4,17 +4,36 @@
   "description": "RC1 external mobile v3 realtime and lightweight sync compatibility adapter",
   "type": "module",
   "main": "./src/index.js",
-  "exports": { ".": { "default": "./src/index.js" }, "./cordis.patch.yml": "./cordis.patch.yml", "./package.json": "./package.json" },
-  "files": ["src", "cordis.patch.yml", "README.md"],
+  "exports": {
+    ".": {
+      "default": "./src/index.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml",
+    "README.md"
+  ],
   "license": "Apache-2.0",
-  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
-  "scripts": { "test": "node --test ../../tests/mobile-stream-compat-rc1.test.mjs" },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "test": "node --test ../../tests/mobile-stream-compat-rc1.test.mjs"
+  },
+  "dependencies": {
+    "dsh-runtime-interface": "workspace:*"
+  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.2",
-    "@deepseek-ai/dsh-api-session-controller": "0.1.2-rc.1",
-    "@deepseek-ai/dsh-api-workspace-controller": "0.1.2-rc.1",
-    "@deepseek-ai/dsh-client-connection": "0.1.2-rc.1",
-    "@deepseek-ai/dsh-host-webserver": "0.1.2-rc.1",
-    "@deepseek-ai/dsh-session": "0.1.2-rc.1"
+    "@deepseek-ai/dsh-api-session-controller": "0.1.2-rc.1 || 0.1.5-rc.2",
+    "@deepseek-ai/dsh-api-workspace-controller": "0.1.2-rc.1 || 0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-connection": "0.1.2-rc.1 || 0.1.5-rc.2",
+    "@deepseek-ai/dsh-host-webserver": "0.1.2-rc.1 || 0.1.5-rc.2",
+    "@deepseek-ai/dsh-session": "0.1.2-rc.1 || 0.1.5-rc.2"
   }
 }

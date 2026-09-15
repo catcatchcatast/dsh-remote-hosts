@@ -1,6 +1,16 @@
+# Current source: DSH 0.1.5-rc.2 Preview
+
+Use `release-profile.json` and `node tools/release-profile.mjs build` for the current package closure. Official runtime inputs must match exactly `0.1.5-rc.2`; prepare them with `tools/prepare-official-runtime.mjs`. Build an upstream workspace UI candidate with `tools/build-rc2-workspace-candidate.mjs`; retain its upstream license. Installation is profile-scoped through the existing managed service entry point, with previous packages and configuration available for rollback. Never modify `dsh-core` or copy private runtime profiles into this repository.
+
+The existing GitHub `v0.1.2-preview` archives are older binaries, not rc.2 artifacts. A new public binary release has not been prepared by this source-only synchronization. The legacy instructions below document that older release and must not be applied unchanged to rc.2.
+
+---
+
 # Installation and deployment
 
-## 1. Match the runtime
+## Legacy 0.1.2 binary instructions — not for current rc.2 source
+
+### 1. Match the runtime
 
 Use DSH `0.1.2-rc.1`. Do not mix plugin bundles from another release candidate.
 Build the repository against a sibling checkout of the matching DSH source.

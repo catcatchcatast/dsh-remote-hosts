@@ -1,14 +1,18 @@
 packages:
-  - 'compat/android-bootstrap-mobile-session-sync'
-  - 'packages/browser-host-hub-rc1'
-  - 'packages/mobile-bootstrap-rc1'
-  - 'packages/mobile-controller-compat-rc1'
-  - 'packages/mobile-interactions-compat-rc1'
-  - 'packages/mobile-session-sync-rc1'
-  - 'packages/mobile-stream-compat-rc1'
-  - 'packages/model-menu-filter'
+  - 'packages/*-rc1'
   - 'packages/rc1-host-carriers'
-  - 'packages/subscriptions-compat-rc1'
+  - 'packages/model-menu-filter'
   - 'packages/ui-directory-picker-browse'
-  - 'packages/ui-workspace-menu-compat-rc1'
+  - 'packages/runtime-interface'
 autoInstallPeers: false
+minimumReleaseAgeExclude:
+  - '@deepseek-ai/dsh-atomic-write@0.1.5-rc.2'
+  - '@deepseek-ai/dsh-home-paths@0.1.5-rc.2'
+overrides:
+  "@deepseek-ai/dsh-brand": "0.1.2-rc.1"
+  "@deepseek-ai/dsh-llm": "0.1.2-rc.1"
+  "@deepseek-ai/dsh-timeout": "0.1.2-rc.1"
+  "@deepseek-ai/dsh-typert-protocol": "0.1.2-rc.1"
+  "@deepseek-ai/dsh-util-crypto": "0.1.2-rc.1"
+  "@deepseek-ai/dsh-util-values": "0.1.2-rc.1"
+  "@deepseek-ai/dsh-web": "0.1.2-rc.1"

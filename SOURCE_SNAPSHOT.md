@@ -1,29 +1,9 @@
 # Source snapshot
 
-This publication tree was prepared from source commit
-`590f355d4a6048e2c67ccad395c140c71ee190a4` on 2026-09-10.
+Updated on 2026-09-15 from development source `aaf6f6974497a4ab65535cab600842be53066aec`. Only source deltas were imported; private Git history, change records, device evidence, configuration, credentials, and build artifacts are excluded.
 
-The publication commit intentionally omits the original `.git` directory,
-development branches, `.codex` change records, machine-specific acceptance
-scripts, screenshots, runtime profiles, credentials, logs, and build artifacts.
-Synthetic test fixtures use documentation-only hosts and example identities.
+Current target: DSH `0.1.5-rc.2`; retained compatibility paths: `0.1.2-rc.1`. Existing GitHub `v0.1.2-preview` binaries are unchanged.
 
-The isolated Android bootstrap fallback under
-`compat/android-bootstrap-mobile-session-sync` comes from source commit
-`6e71de56f55254044bd9021ab0c88e733d2803ae`; its original development history
-and trace annotations are omitted.
+The remote snapshot includes the formally adapted runtime interface and the validated Windows startup follow-up. Separate Home candidate changes are not merged into this snapshot.
 
-## Updates in this publication
-
-- Preserve successful per-host session lists across slow requests and reconnects,
-  and deliver late lists without overwriting newer mutations.
-- Replace eager per-session background followers with a single global event
-  listener. Heavy history reads are bounded to two per host and one per session.
-- Route background list refreshes through the existing scoped carrier.
-- Keep expanded project sessions ordered by their latest update time.
-- Refresh protocol, recovery and ordering regression tests.
-
-Development revisions include targeted tests and a bounded desktop stability
-observation. This does not certify every older server deployment or complete
-Android background synchronization. Update compatible Android and server
-adapters together; subagent failures remain session-local.
+Development acceptance does not substitute for a public-source build or complete endurance acceptance. No new binary release or 300ms first-readable guarantee is claimed.
