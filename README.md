@@ -12,7 +12,7 @@ This is a community project, not an official DeepSeek product. It connects to DS
 
 | What you are using | DSH target | Status |
 | --- | --- | --- |
-| Current source snapshot | `0.1.5-rc.2` | Preview; adapted source, new public binaries pending |
+| Current source snapshot | `0.1.5-rc.2` | Preview; matching binaries in `v0.1.5-rc.2-preview` |
 | Existing `v0.1.2-preview` downloads | `0.1.2-rc.1` | Older prerelease binaries; not rc.2 packages |
 | Retained compatibility paths | `0.1.2-rc.1` | Included in source; validate the exact package/profile combination |
 | Other versions, including stable 0.1.5 | — | Not claimed compatible |
@@ -109,7 +109,7 @@ The current local source verification recorded a successful build, interface-bou
 
 - Rebuild and privacy-check public plugin archives from the final rc.2 publication commit.
 - Publish matching installation manifests, compatibility evidence, SHA-256 checksums, and rollback instructions.
-- Verify the coordinated Android/remote-host combination before publishing new preview downloads.
+- Continue coordinated Android/remote-host device validation; the published preview binaries are not a claim of complete scenario acceptance.
 
 No new product feature or release date is promised. Unaccepted Home-only candidates and optional performance work are not presented as released features. A 300ms mobile first-screen guarantee is not claimed.
 

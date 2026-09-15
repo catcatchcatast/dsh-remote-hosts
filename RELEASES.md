@@ -2,7 +2,7 @@
 
 The current public release line is `v0.1.2-preview`, targets DSH
 `0.1.2-rc.1`, and must be published as a GitHub prerelease rather than Latest.
-The current source targets DSH `0.1.5-rc.2`; new public binaries are pending. Existing `v0.1.2-preview` assets retain their original compatibility and hashes.
+The current preview release is `v0.1.5-rc.2-preview`, targeting DSH `0.1.5-rc.2`; it is a prerelease, not Latest. Final DSH 0.1.5 compatibility is not claimed. Existing `v0.1.2-preview` assets retain their original compatibility and hashes.
 
 Plugin archives are published through GitHub Releases rather than committed to
 the source tree. Every release entry should contain:
