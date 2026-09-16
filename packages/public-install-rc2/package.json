@@ -1,0 +1,63 @@
+{
+  "name": "dsh-remote-hosts",
+  "version": "0.1.5-rc.2",
+  "description": "Public installation entry for the DSH 0.1.5-rc.2 Remote Hosts plugin closure",
+  "type": "module",
+  "files": [
+    "README.md",
+    "cordis.patch.yml",
+    "profile.patch.example.yml",
+    "bridges"
+  ],
+  "exports": {
+    "./browser-host-hub": "./bridges/browser-host-hub.mjs",
+    "./mobile-bootstrap": "./bridges/mobile-bootstrap.mjs",
+    "./mobile-controller-compat": "./bridges/mobile-controller-compat.mjs",
+    "./mobile-interactions-compat": "./bridges/mobile-interactions-compat.mjs",
+    "./mobile-session-sync": "./bridges/mobile-session-sync.mjs",
+    "./mobile-stream-compat": "./bridges/mobile-stream-compat.mjs",
+    "./model-menu-filter": "./bridges/model-menu-filter.mjs",
+    "./remote-host-carriers": "./bridges/remote-host-carriers.mjs",
+    "./remote-hosts-settings": "./bridges/remote-hosts-settings.mjs",
+    "./runtime-interface": "./bridges/runtime-interface.mjs",
+    "./subscriptions-compat": "./bridges/subscriptions-compat.mjs",
+    "./ui-directory-picker-browse": "./bridges/ui-directory-picker-browse.mjs"
+  },
+  "license": "Apache-2.0",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-client-ui-directory-picker-browse": "workspace:*",
+    "dsh-browser-host-hub-rc1": "workspace:*",
+    "dsh-mobile-bootstrap-rc1": "workspace:*",
+    "dsh-mobile-controller-compat-rc1": "workspace:*",
+    "dsh-mobile-interactions-compat-rc1": "workspace:*",
+    "dsh-mobile-session-sync-rc1": "workspace:*",
+    "dsh-mobile-stream-compat-rc1": "workspace:*",
+    "dsh-model-menu-filter": "workspace:*",
+    "dsh-rc1-host-carriers": "workspace:*",
+    "dsh-remote-hosts-settings-rc1": "workspace:*",
+    "dsh-runtime-interface": "workspace:*",
+    "dsh-subscriptions-compat-rc1": "workspace:*"
+  },
+  "bundledDependencies": [
+    "@deepseek-ai/dsh-client-ui-directory-picker-browse",
+    "dsh-browser-host-hub-rc1",
+    "dsh-mobile-bootstrap-rc1",
+    "dsh-mobile-controller-compat-rc1",
+    "dsh-mobile-interactions-compat-rc1",
+    "dsh-mobile-session-sync-rc1",
+    "dsh-mobile-stream-compat-rc1",
+    "dsh-model-menu-filter",
+    "dsh-rc1-host-carriers",
+    "dsh-remote-hosts-settings-rc1",
+    "dsh-runtime-interface",
+    "dsh-subscriptions-compat-rc1"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/dsh": "0.1.5-rc.2"
+  }
+}

@@ -2,7 +2,7 @@
 
 The current public release line is `v0.1.2-preview`, targets DSH
 `0.1.2-rc.1`, and must be published as a GitHub prerelease rather than Latest.
-The current preview release is `v0.1.5-rc.2-preview`, targeting DSH `0.1.5-rc.2`; it is a prerelease, not Latest. Final DSH 0.1.5 compatibility is not claimed. Existing `v0.1.2-preview` assets retain their original compatibility and hashes.
+The current installable preview release is `v0.1.5-rc.2-preview.1`, targeting DSH `0.1.5-rc.2`; it is a prerelease, not Latest. Its `dsh-remote-hosts-0.1.5-rc.2.tgz` archive is the self-contained public entry. The earlier `v0.1.5-rc.2-preview` release retains the component package set. Final DSH 0.1.5 compatibility is not claimed. Existing `v0.1.2-preview` assets retain their original compatibility and hashes.
 
 Plugin archives are published through GitHub Releases rather than committed to
 the source tree. Every release entry should contain:
@@ -33,3 +33,7 @@ Release notes must link the source commit, list every asset and SHA-256, state
 whether a package transforms an official DSH component, and include `LICENSE`
 and `NOTICE`. Questions use GitHub Issues; private logs and security reports go
 to `catcatchcatast@gmail.com`.
+
+For the public entry, the release gate additionally verifies installation through `dsh plugin --profile web add` in a new profile, import of every bundled bridge, a real `0.1.5-rc.2` DSH Web boot, HTTP 401 without authentication, and process/port release after stop. The transformed official Workspace UI remains a separate upstream-licensed artifact.
+
+<!-- 变更追溯：CHG-20260916-145608-public-install-entry-aeb49531；记录：.codex/doc/change-history/CHG-20260916-145608-public-install-entry-aeb49531.md -->

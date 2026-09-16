@@ -4,7 +4,9 @@
 
 - Runtime interface, mobile history epoch and streaming adaptation.
 - Managed Windows startup/restart stabilization; Home-only unaccepted candidates are excluded.
-- Sanitized source synchronization only; existing 0.1.2 Release binaries are unchanged.
+- Added a self-contained public installation entry with explicit bridge exports for DSH profile resolution.
+- Added exact public install, persisted history-epoch configuration, verification, and rollback instructions.
+- Existing 0.1.2 Release binaries remain unchanged.
 
 ## 0.1.2 Preview
 
@@ -18,3 +20,5 @@
 
 DSH 0.1.5 adaptation is in progress. It is not supported yet and has no
 announced release date.
+
+<!-- 变更追溯：CHG-20260916-145608-public-install-entry-aeb49531；记录：.codex/doc/change-history/CHG-20260916-145608-public-install-entry-aeb49531.md -->

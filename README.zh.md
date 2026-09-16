@@ -12,7 +12,8 @@
 
 | 使用对象 | DSH 目标版本 | 状态 |
 | --- | --- | --- |
-| 当前源码快照 | `0.1.5-rc.2` | 预览源码；安装包见 `v0.1.5-rc.2-preview` |
+| 当前公开安装入口 | `0.1.5-rc.2` | 预览版；自包含安装包见 `v0.1.5-rc.2-preview.1` |
+| 较早的 rc.2 包集合 | `0.1.5-rc.2` | `v0.1.5-rc.2-preview`；只有组件包，没有已验证的单入口 |
 | 已有 `v0.1.2-preview` 下载 | `0.1.2-rc.1` | 旧版预发布附件，不是 rc.2 安装包 |
 | 源码保留的兼容路径 | `0.1.2-rc.1` | 需验证具体包与配置组合 |
 | 其他版本，包括正式版 0.1.5 | — | 未声明兼容 |
@@ -79,16 +80,27 @@
 
 [`v0.1.2-preview`](https://github.com/catcatchcatast/dsh-remote-hosts/releases/tag/v0.1.2-preview) 只能按其清单搭配 `0.1.2-rc.1` 使用。先校验 SHA-256（文件内容哈希）；[INSTALL-PLAN.md](INSTALL-PLAN.md) 的旧版章节记录该套包。
 
-### 使用当前 0.1.5-rc.2 源码
+### 安装当前 0.1.5-rc.2 预览版
 
-1. 确认目标 DSH 恰好为 `0.1.5-rc.2`，各远程电脑已具备可用且已登录的 DSH。
-2. 配置 SSH（安全远程连接）并独立核对主机指纹。DSH 保持监听本机回环，通过 SSH 或 Tailscale 上的 SSH 连接。
-3. 按下文构建当前包集合；参考 [INSTALL-PLAN.md](INSTALL-PLAN.md) 准备精确版本的官方输入和工作区 UI 转换。
-4. 以 [`config/host-profile.example.yml`](config/host-profile.example.yml) 为模板，在仓库外提供实际主机和凭据；示例不是可直接运行的个人配置。
-5. 安装 `release-profile.json` 选择的完整依赖集合及必要运行时／UI 输入，不混用不同版本清单的包。
-6. 经现有受控服务入口重启，检查本机／远程项目、正文、中断、审批和重连，再扩大使用范围。
+先确认目标运行时恰好是 `0.1.5-rc.2`，再把自包含发布包加入运行 Web／Desktop 的配置档：
 
-当前预览是插件包集合，不是一键安装器。远程插件和 Android 应作为匹配组合更新。
+```powershell
+dsh plugin --profile web add "https://github.com/catcatchcatast/dsh-remote-hosts/releases/download/v0.1.5-rc.2-preview.1/dsh-remote-hosts-0.1.5-rc.2.tgz"
+```
+
+首次启动前，把 [`packages/public-install-rc2/profile.patch.example.yml`](packages/public-install-rc2/profile.patch.example.yml) 中的 `runtime-interface` 条目合并到该配置档的 `cordis.patch.yml`。把示例 `datasetId`（历史数据集标识）换成该主机持久会话数据的稳定标识；普通重启不得改变，不同主机不得共用。
+
+SSH 仍需单独配置并核对主机指纹，每台 DSH 只监听本机回环。主机地址和凭据不会进入安装包；[`config/host-profile.example.yml`](config/host-profile.example.yml) 只是无密钥结构示例。经原有受控入口启动后，再检查本机／远程项目、正文、中断、审批和重连。
+
+回滚时从同一配置档删除入口包：
+
+```powershell
+dsh plugin --profile web remove dsh-remote-hosts
+```
+
+该发布入口内嵌 12 个项目自有运行包，安装时不会查询未公开的内部包名。官方 Workspace UI 转换包仍是保留上游许可证的独立可选下载；安装入口不会暗中替换官方 UI。校验值、源码构建、详细配置和隔离验收证据见 [INSTALL-PLAN.md](INSTALL-PLAN.md)。
+
+远程插件和[配套 Android 客户端](https://github.com/catcatchcatast/dsh-t-remote-android)应作为匹配组合更新。
 
 ## 构建与验证
 
@@ -103,12 +115,12 @@ pnpm run check
 
 官方集成与 UI 转换测试另需精确版本的未修改输入。缺少输入的测试明确跳过，不能算作官方运行时验收通过。隔离的旧手机引导包保留独立历史构建前提。
 
-当前本地源码检查记录：构建、接口边界检查通过，测试 **305 项通过／12 项跳过**。这不替代完整公开安装包或多主机稳定负载验收。来源见 [SOURCE_SNAPSHOT.md](SOURCE_SNAPSHOT.md)。
+当前本地源码检查记录：构建、接口边界检查通过，测试 **307 项通过／12 项跳过**。这不替代完整多主机稳定负载验收；公开入口还通过了 [INSTALL-PLAN.md](INSTALL-PLAN.md) 记录的隔离二进制安装与启动检查。来源见 [SOURCE_SNAPSHOT.md](SOURCE_SNAPSHOT.md)。
 
 ## 接下来的发布工作
 
-- 从最终 rc.2 发布提交重新构建并扫描公开插件附件。
-- 提供匹配的安装清单、兼容证据、SHA-256 和回滚步骤。
+- 每次公开插件附件都从最终发布提交重建并重新做隐私检查。
+- 每个预发布版本保持安装清单、兼容证据、SHA-256 和回滚步骤一致。
 - 继续验证 Android 与远程插件的真机组合；预览包发布不代表全部场景已验收。
 
 不承诺新增产品功能或发布日期。未验收的 Home 专属候选和可选性能工作不列为已发布功能，也不宣称手机 300ms 首屏保证。
@@ -137,3 +149,5 @@ pnpm run check
 项目自有代码使用 **Apache-2.0**。第三方组件，包括官方 UI 转换内容，保留原许可证和归属。见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。
 
 配套项目：[DSH T-remote 安卓客户端](https://github.com/catcatchcatast/dsh-t-remote-android)。检索关键词：DSH 远程插件、DeepSeek Harness 远程主机、多主机、remote hosts、remote plugin、SSH、Tailscale。
+
+<!-- 变更追溯：CHG-20260916-145608-public-install-entry-aeb49531；记录：.codex/doc/change-history/CHG-20260916-145608-public-install-entry-aeb49531.md -->

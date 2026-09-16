@@ -2,6 +2,7 @@ packages:
   - 'packages/*-rc1'
   - 'packages/rc1-host-carriers'
   - 'packages/model-menu-filter'
+  - 'packages/public-install-rc2'
   - 'packages/ui-directory-picker-browse'
   - 'packages/runtime-interface'
 autoInstallPeers: false

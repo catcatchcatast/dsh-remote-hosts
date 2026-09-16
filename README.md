@@ -12,7 +12,8 @@ This is a community project, not an official DeepSeek product. It connects to DS
 
 | What you are using | DSH target | Status |
 | --- | --- | --- |
-| Current source snapshot | `0.1.5-rc.2` | Preview; matching binaries in `v0.1.5-rc.2-preview` |
+| Current public entry | `0.1.5-rc.2` | Preview; self-contained package in `v0.1.5-rc.2-preview.1` |
+| Earlier rc.2 package set | `0.1.5-rc.2` | `v0.1.5-rc.2-preview`; component archives without the verified single entry |
 | Existing `v0.1.2-preview` downloads | `0.1.2-rc.1` | Older prerelease binaries; not rc.2 packages |
 | Retained compatibility paths | `0.1.2-rc.1` | Included in source; validate the exact package/profile combination |
 | Other versions, including stable 0.1.5 | — | Not claimed compatible |
@@ -79,16 +80,27 @@ Architecture and contract details: [compatibility](COMPATIBILITY.md), [runtime i
 
 Use the [`v0.1.2-preview` release](https://github.com/catcatchcatast/dsh-remote-hosts/releases/tag/v0.1.2-preview) only with its documented `0.1.2-rc.1` runtime and manifests. Verify the downloaded SHA-256 sidecars. The legacy section of [INSTALL-PLAN.md](INSTALL-PLAN.md) documents this package set.
 
-### For the current 0.1.5-rc.2 source
+### Install the current 0.1.5-rc.2 preview
 
-1. Confirm the target DSH runtime is exactly `0.1.5-rc.2` and each remote computer has a working, authenticated DSH installation.
-2. Set up SSH access and independently verify the host fingerprint. Keep DSH listening on loopback; use an SSH route or SSH over Tailscale.
-3. Build the current source package set below. Consult [INSTALL-PLAN.md](INSTALL-PLAN.md) for exact upstream inputs and the workspace UI transformation.
-4. Use [`config/host-profile.example.yml`](config/host-profile.example.yml) as an example, not as a ready-to-run personal profile. Supply real host and credential values outside the repository.
-5. Install the complete package closure selected by `release-profile.json`, including required runtime/UI inputs. Do not mix packages from different release manifests.
-6. Restart through the existing managed service entry point. Check local and remote projects, output, cancellation, approvals, and reconnect before broad use.
+Confirm that the target runtime is exactly `0.1.5-rc.2`, then add the self-contained release archive to the profile that runs DSH Web/Desktop:
 
-This preview is a package set, not a one-click installer. The remote plugin and Android client should be updated as a coordinated combination.
+```powershell
+dsh plugin --profile web add "https://github.com/catcatchcatast/dsh-remote-hosts/releases/download/v0.1.5-rc.2-preview.1/dsh-remote-hosts-0.1.5-rc.2.tgz"
+```
+
+Before first boot, merge the `runtime-interface` entry from [`packages/public-install-rc2/profile.patch.example.yml`](packages/public-install-rc2/profile.patch.example.yml) into the profile's `cordis.patch.yml`. Replace its example `datasetId` with a stable identifier for that host's persisted session dataset. Keep it unchanged across ordinary restarts and use a different value on each host.
+
+Set up SSH separately, verify the host fingerprint, and keep each DSH runtime on loopback. Host addresses and credentials remain outside the package; [`config/host-profile.example.yml`](config/host-profile.example.yml) is a secret-free shape example. Start through the existing managed entry point, then check local/remote projects, output, cancellation, approvals, and reconnect before broad use.
+
+Rollback removes this bundle entry from the same profile:
+
+```powershell
+dsh plugin --profile web remove dsh-remote-hosts
+```
+
+The release entry embeds the 12 project-owned runtime packages and does not query unpublished package names during installation. The transformed official Workspace UI archive remains a separate optional download under its upstream license; installing the entry does not silently replace official UI bytes. See [INSTALL-PLAN.md](INSTALL-PLAN.md) for checksums, source builds, exact configuration, and isolated verification evidence.
+
+The remote plugin and [Android client](https://github.com/catcatchcatast/dsh-t-remote-android) should be updated as a coordinated combination.
 
 ## Build and verify
 
@@ -103,12 +115,12 @@ pnpm run check
 
 Exact upstream runtime/UI inputs are needed for official integration and transformation tests. Tests that lack those inputs explicitly skip; that is not a successful official-runtime acceptance. The isolated legacy Android bootstrap fallback retains separate historical build prerequisites.
 
-The current local source verification recorded a successful build, interface-boundary check, and **305 passed / 12 skipped** tests. That does not replace a complete public-binary or multi-host endurance acceptance. See [SOURCE_SNAPSHOT.md](SOURCE_SNAPSHOT.md).
+The current local source verification recorded a successful build, interface-boundary check, and **307 passed / 12 skipped** tests. That does not replace a complete multi-host endurance acceptance. The public entry also passed the isolated binary installation and boot checks documented in [INSTALL-PLAN.md](INSTALL-PLAN.md). See [SOURCE_SNAPSHOT.md](SOURCE_SNAPSHOT.md).
 
 ## What is next
 
-- Rebuild and privacy-check public plugin archives from the final rc.2 publication commit.
-- Publish matching installation manifests, compatibility evidence, SHA-256 checksums, and rollback instructions.
+- Continue privacy-checking every public plugin archive from its final publication commit.
+- Keep installation manifests, compatibility evidence, SHA-256 checksums, and rollback instructions aligned with each prerelease.
 - Continue coordinated Android/remote-host device validation; the published preview binaries are not a claim of complete scenario acceptance.
 
 No new product feature or release date is promised. Unaccepted Home-only candidates and optional performance work are not presented as released features. A 300ms mobile first-screen guarantee is not claimed.
@@ -137,3 +149,5 @@ Do not publish tokens, private keys, authorization URLs, real IPs/hostnames, dev
 Project-owned code uses **Apache-2.0**. Third-party components, including transformed official UI content, retain their original licenses and notices. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 Related project: [DSH T-remote Android client](https://github.com/catcatchcatast/dsh-t-remote-android). Search keywords: DSH 远程插件、DeepSeek Harness 远程主机、remote hosts、remote plugin、multi-host、SSH、Tailscale.
+
+<!-- 变更追溯：CHG-20260916-145608-public-install-entry-aeb49531；记录：.codex/doc/change-history/CHG-20260916-145608-public-install-entry-aeb49531.md -->

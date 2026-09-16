@@ -1,0 +1,41 @@
+- id: connection
+  inject:
+    - webRuntime
+    - webServer
+
+- id: directory-picker
+  disabled: true
+
+- insert:
+    - id: runtime-interface
+      name: dsh-remote-hosts/runtime-interface
+      config:
+        upstreamVersion: '0.1.5-rc.2'
+    - id: mobile-bootstrap-rc1
+      name: dsh-remote-hosts/mobile-bootstrap
+    - id: mobile-interactions-compat-rc1
+      name: dsh-remote-hosts/mobile-interactions-compat
+    - id: directory-picker-browse
+      name: '@deepseek-ai/dsh-host-directory-picker-browse'
+    - id: ui-directory-picker-browse
+      name: dsh-remote-hosts/ui-directory-picker-browse
+    - id: mobile-controller-compat-rc1
+      name: dsh-remote-hosts/mobile-controller-compat
+    - id: mobile-session-sync-rc1
+      name: dsh-remote-hosts/mobile-session-sync
+    - id: mobile-stream-compat-rc1
+      name: dsh-remote-hosts/mobile-stream-compat
+    - id: rc1-host-carriers
+      name: dsh-remote-hosts/remote-host-carriers
+      config:
+        targets: []
+    - id: browser-host-hub-rc1
+      name: dsh-remote-hosts/browser-host-hub
+    - id: remote-hosts-settings-rc1
+      name: dsh-remote-hosts/remote-hosts-settings
+    - id: subscriptions-compat-rc1
+      name: dsh-remote-hosts/subscriptions-compat
+    - id: model-menu-filter
+      name: dsh-remote-hosts/model-menu-filter
+
+# 变更追溯：CHG-20260916-145608-public-install-entry-aeb49531；记录：.codex/doc/change-history/CHG-20260916-145608-public-install-entry-aeb49531.md

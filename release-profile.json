@@ -20,7 +20,8 @@
     "subscriptions-compat-rc1",
     "model-menu-filter",
     "ui-directory-picker-browse",
-    "ui-workspace-menu-compat-rc1"
+    "ui-workspace-menu-compat-rc1",
+    "public-install-rc2"
   ],
   "testPatterns": [
     "*rc1*.test.mjs",
@@ -35,6 +36,7 @@
     "mobile-tool-details-lazy.test.mjs",
     "model-menu-filter.test.mjs",
     "ui-workspace-session-menu.test.mjs",
+    "public-install-entry.test.mjs",
     "agent-operations-interface.test.mjs",
     "mobile-assistant-stream-integration.test.mjs"
   ]

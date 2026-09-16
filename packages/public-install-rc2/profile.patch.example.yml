@@ -1,0 +1,12 @@
+# Merge this entry into the target profile's cordis.patch.yml before first boot.
+# Keep datasetId stable for the same persisted session dataset. Do not copy one
+# host's datasetId to another host or change the generations during a restart.
+- id: runtime-interface
+  config:
+    upstreamVersion: '0.1.5-rc.2'
+    historyEpoch:
+      datasetId: replace-with-a-stable-host-history-id
+      sequenceFormatGeneration: 3
+      generation: 1
+
+# 变更追溯：CHG-20260916-145608-public-install-entry-aeb49531；记录：.codex/doc/change-history/CHG-20260916-145608-public-install-entry-aeb49531.md

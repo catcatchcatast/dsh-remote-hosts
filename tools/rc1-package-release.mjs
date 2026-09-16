@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import os from 'node:os'
@@ -150,6 +150,40 @@ function npmPack(cwd, stagingDir) {
   return path.resolve(stagingDir, entry.filename)
 }
 
+// 变更追溯：CHG-20260916-145608-public-install-entry-aeb49531；记录：.codex/doc/change-history/CHG-20260916-145608-public-install-entry-aeb49531.md
+function installBundledDependencies(cwd, manifest, artifacts) {
+  const bundled = manifest.bundledDependencies ?? manifest.bundleDependencies ?? []
+  if (!Array.isArray(bundled)) throw new Error('BUNDLED_DEPENDENCIES_INVALID')
+  if (new Set(bundled).size !== bundled.length) throw new Error('BUNDLED_DEPENDENCIES_DUPLICATE')
+  if (bundled.length === 0) return []
+  const specs = []
+  for (const name of bundled) {
+    if (typeof name !== 'string' || name === '' || typeof manifest.dependencies?.[name] !== 'string') throw new Error('BUNDLED_DEPENDENCY_UNDECLARED')
+    const artifact = artifacts.get(name)
+    if (artifact === undefined || !fs.existsSync(artifact)) throw new Error('BUNDLED_DEPENDENCY_ARTIFACT_MISSING')
+    specs.push(artifact)
+  }
+  const npmCli = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
+  // Peers are supplied and version-checked by the target DSH runtime. The
+  // temporary pack directory only needs the project-owned archives embedded.
+  const result = spawnSync(process.execPath, [npmCli, 'install', '--ignore-scripts', '--legacy-peer-deps', '--no-audit', '--no-fund', '--no-package-lock', '--save=false', ...specs], {
+    cwd,
+    encoding: 'utf8',
+    windowsHide: true,
+    maxBuffer: 8 * 1024 * 1024,
+    env: { ...process.env, npm_config_audit: 'false', npm_config_fund: 'false', npm_config_update_notifier: 'false' },
+  })
+  if (result.error) throw result.error
+  if (result.status !== 0) throw new Error('BUNDLED_DEPENDENCY_INSTALL_FAILED')
+  for (const name of bundled) {
+    const installed = path.join(cwd, 'node_modules', ...name.split('/'), 'package.json')
+    if (!fs.existsSync(installed) || fs.lstatSync(path.dirname(installed)).isSymbolicLink()) throw new Error('BUNDLED_DEPENDENCY_INSTALL_INCOMPLETE')
+    const actual = JSON.parse(fs.readFileSync(installed, 'utf8'))
+    if (actual.name !== name || actual.version !== manifest.dependencies[name]) throw new Error('BUNDLED_DEPENDENCY_VERSION_MISMATCH')
+  }
+  return [...bundled]
+}
+
 export function buildRelease({ sourceRoot = sourceDefault, stagingDir, runtimeVersion } = {}) {
   sourceRoot = path.resolve(sourceRoot)
   const sourceProfile = JSON.parse(fs.readFileSync(path.join(sourceRoot, 'release-profile.json'), 'utf8'))
@@ -176,18 +210,21 @@ export function buildRelease({ sourceRoot = sourceDefault, stagingDir, runtimeVe
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-rc1-release-'))
   const generated = []
   const packages = []
+  const artifacts = new Map()
   try {
     for (const item of items) {
       const rewritten = rewriteWorkspaceDependencies(item.manifest, versions, item.directory)
       const temporaryPackage = path.join(temporary, item.directory)
       copyPackage(sourceRoot, item, temporaryPackage, rewritten.manifest)
+      const bundledDependencies = installBundledDependencies(temporaryPackage, rewritten.manifest, artifacts)
       const artifact = npmPack(temporaryPackage, stagingDir)
       generated.push(artifact)
+      artifacts.set(item.manifest.name, artifact)
       const artifactSha256 = fileHash(artifact)
       const sidecar = `${artifact}.sha256`
       fs.writeFileSync(sidecar, `${artifactSha256}  ${path.basename(artifact)}\n`)
       generated.push(sidecar)
-      packages.push({ directory: item.directory, name: item.manifest.name, version: item.manifest.version, artifact: path.basename(artifact), artifactSha256, sourceFiles: sourceFiles.filter(file => file.path.startsWith(`packages/${item.directory}/`)), workspaceDependencyRewrites: rewritten.rewrites })
+      packages.push({ directory: item.directory, name: item.manifest.name, version: item.manifest.version, artifact: path.basename(artifact), artifactSha256, sourceFiles: sourceFiles.filter(file => file.path.startsWith(`packages/${item.directory}/`)), workspaceDependencyRewrites: rewritten.rewrites, ...(bundledDependencies.length === 0 ? {} : { bundledDependencies }) })
     }
     if (sha256(JSON.stringify(sourceHashEntries(items, sourceRoot))) !== sourceTreeHash) throw new Error('SOURCE_CHANGED_DURING_PACK')
     const manifest = {
