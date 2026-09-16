@@ -26,6 +26,10 @@ test('packs every rc1 adapter and browser picker offline with candidate source h
     const picker = result.packages.find(item => item.directory === 'ui-directory-picker-browse')
     assert.ok(picker.sourceFiles.some(file => file.path.endsWith('/src/client/HostPicker.tsx')))
     assert.ok(picker.sourceFiles.some(file => file.path.endsWith('/lib/client.js')))
+    // 变更追溯：CHG-20260916-153733-sanitize-build-path-dc012afd；记录：.codex/doc/change-history/CHG-20260916-153733-sanitize-build-path-dc012afd.md
+    const packedPickerClient = execFileSync('tar', ['-xOf', path.join(staging, picker.artifact), 'package/lib/client.js'], { encoding: 'utf8', windowsHide: true })
+    assert.doesNotMatch(packedPickerClient, /(?:^|[\s"'(])[A-Za-z]:[\\/]/)
+    assert.match(packedPickerClient, /dsh-rc1-directory-picker-css:src\/client\/DirectoryBrowser\.module\.css\.mjs/)
     assert.ok(result.packages.some(item => item.workspaceDependencyRewrites.some(rewrite => rewrite.from === 'workspace:*' && rewrite.to === '0.1.0-rc.1')))
     for (const item of result.packages) {
       const artifact = path.join(staging, item.artifact)

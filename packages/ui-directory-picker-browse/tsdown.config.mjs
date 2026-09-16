@@ -1,22 +1,37 @@
 
 import { readFile } from 'node:fs/promises'
-import { basename, dirname, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'tsdown'
 
 const PACKAGE_ID = '@deepseek-ai/dsh-client-ui-directory-picker-browse'
 const CSS_PREFIX = '\0dsh-rc1-directory-picker-css:'
 const CSS_SUFFIX = '.mjs'
+const PACKAGE_ROOT = dirname(fileURLToPath(import.meta.url))
+
+// 变更追溯：CHG-20260916-153733-sanitize-build-path-dc012afd；记录：.codex/doc/change-history/CHG-20260916-153733-sanitize-build-path-dc012afd.md
+function portableCssId(file) {
+  const local = relative(PACKAGE_ROOT, file)
+  if (local === '' || isAbsolute(local) || local === '..' || local.startsWith(`..${sep}`)) throw new Error('CSS_MODULE_OUTSIDE_PACKAGE')
+  return `${CSS_PREFIX}${local.split(sep).join('/')}${CSS_SUFFIX}`
+}
+
+function cssFileFromId(virtualId) {
+  const local = virtualId.slice(CSS_PREFIX.length, -CSS_SUFFIX.length)
+  if (local === '' || local.split('/').includes('..')) throw new Error('CSS_MODULE_ID_INVALID')
+  return resolve(PACKAGE_ROOT, ...local.split('/'))
+}
 
 /** Keep the package build self-contained; dsh-core remains an external runtime. */
 const cssPlugin = {
   name: `${PACKAGE_ID}-css-modules`,
   resolveId(source, importer) {
     if (!source.endsWith('.module.css') || importer === undefined) return null
-    return CSS_PREFIX + resolve(dirname(importer), source) + CSS_SUFFIX
+    return portableCssId(resolve(dirname(importer), source))
   },
   async load(virtualId) {
     if (!virtualId.startsWith(CSS_PREFIX)) return null
-    const file = virtualId.slice(CSS_PREFIX.length, -CSS_SUFFIX.length)
+    const file = cssFileFromId(virtualId)
     const original = await readFile(file, 'utf8')
     const names = [...new Set([...original.matchAll(/\.([A-Za-z_][A-Za-z0-9_-]*)/g)].map(match => match[1]))]
     const map = Object.fromEntries(names.map(name => [name, `${PACKAGE_ID.replace(/[^A-Za-z0-9_-]/g, '-')}-${name}`]))
