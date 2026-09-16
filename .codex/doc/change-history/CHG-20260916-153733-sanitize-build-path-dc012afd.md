@@ -7,7 +7,7 @@
 - final_branch: `codex/20260916-sanitize-build-path-dc012afd`
 - session_id: `01a094f6-54d0-70b2-9e21-f6d5bc4890a2`
 - runtime: `codex`
-- host: `LAPTOP-95JL95Q4`
+- host: `sanitized-publication-builder`
 
 ## 用户需求
 
