@@ -6,7 +6,11 @@ node_modules/
 build/
 packages/*/lib/
 *.log
-.codex/
+.codex/*
+!.codex/doc/
+.codex/doc/*
+!.codex/doc/change-history/
+!.codex/doc/change-history/*.md
 /docs/migration/
 .env
 .env.*
