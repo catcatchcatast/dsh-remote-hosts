@@ -1,7 +1,13 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                   
+                                                                                                                                     
+                                                                                                                                             
 export const en = {
   nav: 'Remote hosts',
   title: 'Remote hosts',
   intro: 'This computer talks to other DSH instances over OpenSSH aliases from your SSH config. Closing this page or disconnecting a tunnel does not stop remote DSH. Tailscale is configured in the Tailscale app, not here.',
+  diagnosticsScope: "Exports local forwarding and this page's diagnostics only; session content and credentials are excluded.",
+  exportDiagnostics: 'Export diagnostics',
+  exportDiagnosticsBusy: 'Exporting diagnostics…',
   local: 'This computer',
   add: 'Add host',
   edit: 'Edit host',
@@ -54,6 +60,9 @@ export const zh = {
   nav: '远程主机',
   title: '远程主机',
   intro: '本机通过 OpenSSH 配置里的 alias 连接其他 DSH。关闭页面或断开隧道不会停止远端 DSH。Tailscale 在 Tailscale 应用中配置，不在本页。',
+  diagnosticsScope: '仅导出本机转发与当前页面诊断，不含会话正文和凭据。',
+  exportDiagnostics: '导出诊断日志',
+  exportDiagnosticsBusy: '正在导出诊断日志…',
   local: '本机',
   add: '添加主机',
   edit: '编辑主机',

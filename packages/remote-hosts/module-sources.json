@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "modules": [
+    "mobile-bootstrap-rc1",
+    "mobile-interactions-compat-rc1",
+    "mobile-controller-compat-rc1",
+    "mobile-session-sync-rc1",
+    "mobile-stream-compat-rc1",
+    "rc1-host-carriers",
+    "browser-host-hub-rc1",
+    "remote-hosts-settings-rc1",
+    "file-upload-compat-rc1"
+  ]
+}

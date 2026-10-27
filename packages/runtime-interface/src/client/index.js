@@ -1,5 +1,12 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                     
+// 本隔离组合采用官方原生UI，仅保留多Host的读取/模型/预设绑定。
+import { bindColdRestoreSelection } from './cold-restore.js'
+import { sanitizeStreamFailure, sanitizeTransportDiagnostic } from '../stream-failure.js'
+import { bindHostModelCatalogs } from './model-catalog.js'
+import { bindAgentPresetTargets } from './agent-presets.js'
+
 const CHANNEL = '/remote-hosts'
-const METHODS = new Set(['status', 'discoverAliases', 'add', 'update', 'remove', 'retry', 'disconnect', 'restart'])
+const METHODS = new Set(['status', 'discoverAliases', 'add', 'update', 'remove', 'retry', 'disconnect', 'restart', 'exportDiagnostics'])
 const REQUEST_KEYS = new Set(['id', 'hostId', 'label', 'alias', 'localPort', 'remotePort', 'launch', 'enabled'])
 const HOST_KEYS = ['id', 'kind', 'label', 'alias', 'state', 'lastError', 'localPort', 'remotePort', 'launch', 'enabled', 'restartAvailable', 'restartState', 'helperReadable']
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -12,6 +19,16 @@ function responseValue(method, result) {
   }
   const value = result.value
   if (!record(value)) throw failure('HOST_UNAVAILABLE')
+  if (method === 'exportDiagnostics') {
+    if (value.schemaVersion !== 1 || value.scope !== 'local-hub-only' || !Array.isArray(value.events) || value.events.length > 512) throw failure('HOST_UNAVAILABLE')
+    const fields = ['time', 'phase', 'endpoint', 'code', 'host', 'session', 'closeCode', 'count', 'durationMs', 'lastSeq']
+    return Object.freeze({ schemaVersion: 1, scope: value.scope, generatedAt: value.generatedAt, limit: 512,
+      dropped: value.dropped, persistenceAvailable: value.persistenceAvailable,
+      events: Object.freeze(value.events.map(event => {
+        if (!record(event)) throw failure('HOST_UNAVAILABLE')
+        return Object.freeze({ ...Object.fromEntries(fields.filter(key => Object.hasOwn(event, key)).map(key => [key, event[key]])), ...sanitizeStreamFailure(event), ...sanitizeTransportDiagnostic(event) })
+      })) })
+  }
   if (method === 'discoverAliases') {
     if (!Array.isArray(value.aliases) || value.aliases.some(alias => typeof alias !== 'string' || alias.length > 256)) throw failure('HOST_UNAVAILABLE')
     return Object.freeze({ aliases: Object.freeze([...value.aliases]) })
@@ -45,5 +62,16 @@ export function createRemoteHostsClient(rpc) {
 
 export const inject = ['connection']
 export function apply(ctx) {
+  const bridge = globalThis.__DSH_BROWSER_HOST_HUB__
+  if (bridge) ctx.effect(() => bindColdRestoreSelection(ctx, bridge), 'runtime-interface: cold restore selection')
   ctx.provide('remoteHostsInterface', createRemoteHostsClient(ctx.get('connection').rpc))
+  if (!bridge) return
+  ctx.inject(['modelDirectories', 'remote', 'sessions'], scope => {
+    scope.effect(() => bindHostModelCatalogs(scope, scope.get('modelDirectories'), ctx.get('connection').rpc), 'runtime-interface: host model catalogs')
+  })
+  ctx.inject(['slots', 'sessions', 'remote'], scope => {
+    scope.effect(() => bindAgentPresetTargets({ slots: scope.slots, sessions: scope.sessions,
+      rpc: ctx.get('connection').rpc, bridge, on: (...args) => scope.on(...args),
+      onRemote: (...args) => scope.remote.$on(...args) }), 'runtime-interface: host agent preset choices')
+  })
 }

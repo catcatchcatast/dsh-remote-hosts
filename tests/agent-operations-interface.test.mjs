@@ -1,3 +1,5 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                     
+                                                                                                                                                         
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
@@ -103,6 +105,68 @@ test('operation envelopes unwrap success and preserve official failures', async 
   await assert.rejects(
     operations.goal.create({ sessionId: 'session-1', objective: 'x' }),
     error => error.code === 'runtime-interface/capability-unavailable',
+  )
+})
+
+test('current interface decodes official submittedAttachments image and file DTOs without loss', async () => {
+  const calls = []
+  const { operations } = fixture(CURRENT_AGENT_OPERATIONS_VERSION, {
+    commands: {
+      execute(_agent, line, attachments) {
+        calls.push({ line, attachments })
+        return undefined
+      },
+    },
+  })
+  const submittedAttachments = [
+    { type: 'image', mediaType: 'image/png', data: 'encoded-image', name: 'screen.png' },
+    { type: 'file', receiptId: 'receipt-1' },
+  ]
+  const result = await operations.commands.execute({
+    agentId: 'session-1', line: '/inspect', submittedAttachments,
+  })
+  assert.equal(result, undefined)
+  assert.deepEqual(calls, [{ line: '/inspect', attachments: submittedAttachments }])
+})
+
+test('legacy interface accepts typed or Android image attachments and rejects files explicitly', async () => {
+  const calls = []
+  const resolveCalls = []
+  const { operations } = fixture(LEGACY_AGENT_OPERATIONS_VERSION, {
+    sessionController: {
+      resolveAgent(sessionId) {
+        resolveCalls.push(sessionId)
+        return { agent: { id: sessionId } }
+      },
+    },
+    commands: {
+      execute(_agent, line, attachments) {
+        calls.push({ line, attachments })
+        return { commandId: 'legacy-command' }
+      },
+    },
+  })
+  const image = { mediaType: 'image/png', data: 'encoded-image', name: 'screen.png' }
+  const typed = await operations.commands.execute({
+    sessionId: 'session-1', line: '/inspect', submittedAttachments: [{ type: 'image', ...image }],
+  })
+  assert.deepEqual(typed, { commandId: 'legacy-command' })
+  assert.deepEqual(calls[0].attachments, [image])
+  await assert.rejects(
+    operations.commands.execute({
+      sessionId: 'session-1', line: '/inspect', submittedAttachments: [{ type: 'file', receiptId: 'receipt-1' }],
+    }),
+    error => error.code === 'runtime-interface/unsupported-attachment',
+  )
+  assert.deepEqual(calls, [
+    { line: '/inspect', attachments: [image] },
+  ])
+  assert.deepEqual(resolveCalls, ['session-1'])
+  await assert.rejects(
+    operations.commands.execute({
+      sessionId: 'session-1', line: '/inspect', images: [], submittedAttachments: [],
+    }),
+    error => error.code === 'runtime-interface/invalid-request',
   )
 })
 

@@ -9,18 +9,29 @@
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
-  "files": ["src", "cordis.patch.yml"],
+  "files": [
+    "src",
+    "cordis.patch.yml"
+  ],
   "license": "Apache-2.0",
-  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
   "scripts": {
     "test": "node --test ../../tests/subscriptions-compat-rc1.test.mjs"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "4.0.2",
-    "@deepseek-ai/dsh-llm": "0.1.2-rc.1",
-    "@deepseek-ai/dsh-settings": "0.1.2-rc.1",
-    "@deepseek-ai/dsh-web": "0.1.2-rc.1",
-    "@deepseek-ai/schemastery": "3.18.2",
-    "dsh-plugin-subscriptions": "0.8.0"
-  }
+    "@deepseek-ai/cordis": "4.0.2 || 4.0.4",
+    "@deepseek-ai/dsh-llm": "0.1.2-rc.1 || 0.2.0-rc.2",
+    "@deepseek-ai/dsh-settings": "0.1.2-rc.1 || 0.2.0-rc.2",
+    "@deepseek-ai/dsh-web": "0.1.2-rc.1 || 0.2.0-rc.2",
+    "@deepseek-ai/schemastery": "3.18.2 || 3.18.4",
+    "dsh-plugin-subscriptions": "0.8.0 || 0.9.2 || 0.9.7"
+  },
+  "dependencies": {
+    "dsh-runtime-interface": "workspace:*"
+  },
+  "private": true
 }

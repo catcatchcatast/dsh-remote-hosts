@@ -6,7 +6,9 @@ export const inject = ['slots', 'remoteHostsInterface', 'locale']
 
 export function apply(ctx) {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'remote-hosts-settings-rc1: copy')
-  const hostsApi = ctx.get('remoteHostsInterface')
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                          
+  const original = ctx.get('remoteHostsInterface'), labels = ctx.get('remoteWorkspaceHostLabels')
+  const hostsApi = labels ? labels.managementClient(original) : original
   const t = ctx.locale.bind(NS)
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',
@@ -17,3 +19,4 @@ export function apply(ctx) {
     inject: () => ({ hostsApi, t }),
   }, RemoteHostsSection))
 }
+                                                                                                                                     

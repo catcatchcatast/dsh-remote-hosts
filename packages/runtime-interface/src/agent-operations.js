@@ -1,3 +1,5 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                           
+                                                                                                                                             
 /**
  * Narrow operation boundary for Agent-owned official services.
  *
@@ -5,6 +7,8 @@
  * receive only operation DTOs; they never receive a resolved Agent, its context,
  * or an official service object.
  *
+ *                                                                                                                                   
+ *                                                                                                                                                       
  */
 
 export const LEGACY_AGENT_OPERATIONS_VERSION = '0.1.2-rc.1'
@@ -17,6 +21,13 @@ export const AGENT_OPERATION_METHODS = Object.freeze([
   'goal.resume',
   'goal.clear',
   'agentPresets.select',
+])
+
+const COMMAND_IMAGE_MEDIA_TYPES = Object.freeze([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
 ])
 
 /**
@@ -38,10 +49,10 @@ export function createAgentOperations({
   const executeCommand = async (request, signal) => {
     assertService(commands, 'commands', ['execute'])
     const normalized = normalizeCommandRequest(request)
+    const submitted = version !== LEGACY_AGENT_OPERATIONS_VERSION
+      ? normalized.attachments
+      : normalized.attachments.map(stripLegacyCommandAttachment)
     const agent = await resolveAgent(sessionController, normalized.sessionId)
-    const submitted = version === CURRENT_AGENT_OPERATIONS_VERSION
-      ? normalized.images.map(image => ({ type: 'image', ...image }))
-      : normalized.images
     return unwrap(await commands.execute(agent, normalized.line, submitted, signal))
   }
 
@@ -99,7 +110,7 @@ async function resolveAgent(sessionController, sessionId) {
 }
 
 function normalizeVersion(value) {
-  if (value !== LEGACY_AGENT_OPERATIONS_VERSION && value !== CURRENT_AGENT_OPERATIONS_VERSION) {
+  if (value !== LEGACY_AGENT_OPERATIONS_VERSION && value !== CURRENT_AGENT_OPERATIONS_VERSION && value !== '0.2.0-rc.2' && value !== '0.2.1-rc.2') {
     throw new AgentOperationError('runtime-interface/unsupported-version', 'The upstream runtime version is not supported', { version: value })
   }
   return value
@@ -109,9 +120,39 @@ function normalizeCommandRequest(request) {
   const source = expectObject(request, 'command request')
   const sessionId = requireString(source.sessionId ?? source.agentId, 'sessionId')
   const line = requireString(source.line, 'line')
-  const images = source.images ?? []
-  if (!Array.isArray(images)) throw new AgentOperationError('runtime-interface/invalid-request', 'images must be an array')
-  return Object.freeze({ sessionId, line, images: Object.freeze(images.map(normalizeImage)) })
+  const attachments = normalizeCommandAttachments(source)
+  return Object.freeze({ sessionId, line, attachments })
+}
+
+function normalizeCommandAttachments(source) {
+  const hasImages = Object.hasOwn(source, 'images')
+  const hasSubmittedAttachments = Object.hasOwn(source, 'submittedAttachments')
+  if (hasImages && hasSubmittedAttachments) {
+    throw new AgentOperationError('runtime-interface/invalid-request', 'images and submittedAttachments are mutually exclusive')
+  }
+  const field = hasSubmittedAttachments ? 'submittedAttachments' : 'images'
+  const value = source[field] ?? []
+  if (!Array.isArray(value)) throw new AgentOperationError('runtime-interface/invalid-request', `${field} must be an array`)
+  return Object.freeze(value.map((item, index) => normalizeCommandAttachment(item, `${field}[${index}]`)))
+}
+
+function normalizeCommandAttachment(value, name) {
+  const attachment = expectObject(value, name)
+  if (attachment.type === 'file') {
+    return Object.freeze({ type: 'file', receiptId: requireString(attachment.receiptId, `${name}.receiptId`) })
+  }
+  if (attachment.type !== undefined && attachment.type !== 'image') {
+    throw new AgentOperationError('runtime-interface/invalid-request', `${name}.type must be image or file`)
+  }
+  return Object.freeze({ type: 'image', ...normalizeImage(attachment, name) })
+}
+
+function stripLegacyCommandAttachment(attachment) {
+  if (attachment.type === 'image') {
+    const { type: _type, ...image } = attachment
+    return image
+  }
+  throw new AgentOperationError('runtime-interface/unsupported-attachment', 'file command attachments require the current upstream runtime')
 }
 
 function normalizeGoalCreateRequest(request) {
@@ -147,12 +188,15 @@ function normalizePresetRequest(request) {
   })
 }
 
-function normalizeImage(value) {
-  const image = expectObject(value, 'image')
-  const mediaType = requireString(image.mediaType, 'image.mediaType')
-  const data = requireString(image.data, 'image.data')
-  const name = image.name === undefined ? undefined : requireString(image.name, 'image.name')
-  return Object.freeze({ mediaType, data, ...(name === undefined ? {} : { name }) })
+function normalizeImage(value, name = 'image') {
+  const image = expectObject(value, name)
+  const mediaType = requireString(image.mediaType, `${name}.mediaType`)
+  if (!COMMAND_IMAGE_MEDIA_TYPES.includes(mediaType)) {
+    throw new AgentOperationError('runtime-interface/invalid-request', `${name}.mediaType is unsupported`)
+  }
+  const data = requireString(image.data, `${name}.data`)
+  const imageName = image.name === undefined ? undefined : requireString(image.name, `${name}.name`)
+  return Object.freeze({ mediaType, data, ...(imageName === undefined ? {} : { name: imageName }) })
 }
 
 function assertService(service, name, methods) {

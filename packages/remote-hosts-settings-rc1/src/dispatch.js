@@ -1,3 +1,6 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                   
+                                                                                                                                     
+                                                                                                                                             
 import { validateTarget } from 'dsh-rc1-host-carriers'
 import { hostIdFromAlias, isConcreteSshAlias, parseConcreteSshAliases, suggestLocalPort } from './ssh-aliases.js'
 import { publicErrorCode, publicHost } from './public.js'
@@ -29,6 +32,7 @@ export function createDispatcher(deps) {
     helperReadable,
     control,
     localRuntime,
+    diagnostics,
     localLabel = 'Local',
     loadState = loadUiState,
     saveState = saveUiState,
@@ -208,7 +212,12 @@ export function createDispatcher(deps) {
     return status()
   }
 
-  const handlers = { status, discoverAliases, add, update, remove, retry, disconnect, restart }
+  async function exportDiagnostics() {
+    if (typeof diagnostics?.snapshot !== "function") throw new Error("HOST_UNAVAILABLE")
+    return diagnostics.snapshot()
+  }
+
+  const handlers = { exportDiagnostics, status, discoverAliases, add, update, remove, retry, disconnect, restart }
 
   async function dispatch(endpoint, payload, signal) {
     try {

@@ -1,16 +1,28 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                               
+                                                                                                                                                     
+                                                                                                                                                   
+                                                                                                                                         
+                                                                                                                                                                       
+                                                                                                                                               
+                                                                                                                                     
 
 /** One transport generation per Host. A failed request is never replayed. */
-export function lazyCarrier(connect, lifetime) {
+export function lazyCarrier(connect, lifetime, { diagnostics, hostId } = {}) {
   let pending
   let current
   let phase = 'offline'
   let disposed = false
-  function drop(entry) {
+  const closedEntries = new WeakSet()
+  function drop(entry, closeSource = 'entry-death', errorCode, endpoint = 'host/describe') {
     if (current === entry) {
       current = undefined
       phase = 'offline'
     }
-    entry?.close()
+    if (entry && !closedEntries.has(entry)) {
+      closedEntries.add(entry)
+      try { diagnostics?.record({ phase: 'carrier_drop', endpoint, hostId, entryId: entry.entryId, operation: 'lazy-drop', closeSource, errorCode }) } catch { /* diagnostics must not affect lifecycle */ }
+      entry.close(closeSource)
+    }
   }
   async function get() {
     lifetime.throwIfAborted()
@@ -32,7 +44,7 @@ export function lazyCarrier(connect, lifetime) {
     }
     return pending
   }
-  const close = () => { disposed = true; drop(current); phase = 'offline' }
+  const close = (closeSource = 'caller-close') => { disposed = true; drop(current, closeSource); phase = 'offline' }
   async function forCaller(signal) {
     signal?.throwIfAborted()
     const connection = get()
@@ -47,15 +59,22 @@ export function lazyCarrier(connect, lifetime) {
     finally { signal.removeEventListener('abort', abort) }
   }
   const lostAuthenticationOrConnection = error => ['CARRIER_RESULT_HTTP_401', 'CARRIER_DISCONNECTED', 'CARRIER_STREAM_ENDED'].includes(error?.message)
-  lifetime.addEventListener('abort', close, { once: true })
+  lifetime.addEventListener('abort', () => close('host-lifetime'), { once: true })
   return {
+    get upstreamVersion() { return current?.carrier.upstreamVersion },
     getState() { return phase },
     async connect(signal) { await forCaller(signal); return phase },
+                                                                                          
+    async ensureCapability(endpoint, signal) {
+      const entry = await forCaller(signal)
+      try { await entry.carrier.ensureCapability?.(endpoint, signal ?? lifetime) }
+      catch (error) { if (lostAuthenticationOrConnection(error)) drop(entry, error?.message === 'CARRIER_RESULT_HTTP_401' ? 'auth-refused' : 'entry-death', error?.message, endpoint); throw error }
+    },
     async raw(path, init = {}) {
       const entry = await forCaller(init.signal)
       init.signal?.throwIfAborted()
       const response = await entry.carrier.raw(path, init)
-      if (response.status === 401) drop(entry)
+      if (response.status === 401) drop(entry, 'auth-refused', 'CARRIER_RESULT_HTTP_401', 'other')
       return response
     },
     async call(endpoint, payload, signal) {
@@ -64,12 +83,13 @@ export function lazyCarrier(connect, lifetime) {
       // Only a connection death invalidates the carrier. Business/timeout errors do not
       // destroy another browser's active streams, nor replay this side-effectful call.
       try { return await entry.carrier.call(endpoint, payload, signal ?? lifetime) }
-      catch (error) { if (lostAuthenticationOrConnection(error)) drop(entry); throw error }
+      catch (error) { if (lostAuthenticationOrConnection(error)) drop(entry, error?.message === 'CARRIER_RESULT_HTTP_401' ? 'auth-refused' : 'entry-death', error?.message, endpoint); throw error }
     },
-    async *open(endpoint, payload, signal) {
+    async *open(endpoint, payload, signal, options) {
       const entry = await forCaller(signal)
-      try { yield* entry.carrier.open(endpoint, payload, signal ?? lifetime) }
-      catch (error) { if (lostAuthenticationOrConnection(error)) drop(entry); throw error }
+      // Independent read sockets cannot invalidate their peers. Shared death
+      // is driven by entry.closed / Host lifetime, never by one reader's error.
+      yield* entry.carrier.open(endpoint, payload, signal ?? lifetime, options)
     },
     close,
   }

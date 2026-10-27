@@ -1,4 +1,6 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                             
 import { Worker } from 'node:worker_threads'
+                                                                                                                                 
 import { fileURLToPath } from 'node:url'
 
 const WORKER_PATH = fileURLToPath(new URL('./bootstrap-publisher-worker.cjs', import.meta.url))
@@ -25,6 +27,7 @@ function reportFailure(report, code) {
 export function createBootstrapPublisher({
   port,
   authenticatedRootUrl,
+  authAdapterSource,
   home,
   WorkerCtor = Worker,
   workerPath = WORKER_PATH,
@@ -43,7 +46,7 @@ export function createBootstrapPublisher({
   let worker
   try {
     worker = new WorkerCtor(workerPath, {
-      workerData: { port, authenticatedRootUrl, home, storePath, retryBaseMs: baseDelay, retryMaxMs: maxDelay, maxAttempts: attempts, cancelBuffer },
+      workerData: { port, authenticatedRootUrl, authAdapterSource, home, storePath, retryBaseMs: baseDelay, retryMaxMs: maxDelay, maxAttempts: attempts, cancelBuffer },
       ...(workerEnvironment === undefined ? {} : { env: workerEnvironment }),
     })
   } catch (error) {

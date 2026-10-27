@@ -4,12 +4,6 @@
     {
       "file": "packages/rc1-host-carriers/src/index.js",
       "ruleId": "carrier-raw",
-      "expressionHash": "09a9c1ad381ade61f133e7e7ef8f27ca4fc31244fdcf9a57662e4a0f559ef3ca",
-      "reason": "远端文件代理专用 raw 供应入口；会话 call/open 已经接口层，只有既有 file-proxy 消费此句柄"
-    },
-    {
-      "file": "packages/rc1-host-carriers/src/index.js",
-      "ruleId": "carrier-raw",
       "expressionHash": "e117485a9cbfd4f84b90dda417da3ad53e056e19e0efa4487a82b7747edc9dd2",
       "reason": "本机文件代理专用 raw 供应入口，与远端复用旧文件传输；不得供会话或历史读取使用"
     },

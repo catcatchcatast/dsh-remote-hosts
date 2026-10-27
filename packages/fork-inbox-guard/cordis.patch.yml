@@ -1,0 +1,4 @@
+# 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                               
+- insert:
+    - id: fork-inbox-guard
+      name: dsh-fork-inbox-guard

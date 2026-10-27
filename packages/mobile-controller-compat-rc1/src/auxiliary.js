@@ -5,6 +5,10 @@
  * `agentOperations` facade; this module does not add a Cordis service or
  * import the main bridge.
  *
+ *                                                                                                                                       
+ *                                                                                                                                   
+ *                                                                                                                                                       
+ *                                                                                                                                                           
  */
 
 export const MOBILE_AUXILIARY_COMPAT_METHODS = Object.freeze([
@@ -39,9 +43,9 @@ async function executeCommand(ctx, payload, signal) {
   const request = commandRequest(payload)
   const operations = operationService(ctx)
   return callOperation(operations.commands?.execute, 'commands.execute', {
+    ...request.args,
     sessionId: request.agentId,
     line: request.line,
-    images: request.images,
   }, signal)
 }
 
@@ -85,32 +89,16 @@ function commandRequest(payload) {
   return {
     agentId: requireSessionId(args.agentId, 'agentId'),
     line: normalizeCommandLine(args.line),
-    images: normalizeImages(args.images ?? []),
+    args,
   }
 }
 
 function normalizeCommandLine(value) {
   const line = requireString(value, 'line')
-  if (!line.startsWith('/') || line.includes('\n') || line.includes('\r')) {
-    throw new BadRequestError('line must be one slash-prefixed line')
+  if (!line.startsWith('/')) {
+    throw new BadRequestError('line must be slash-prefixed')
   }
   return line
-}
-
-function normalizeImages(value) {
-  if (!Array.isArray(value)) throw new BadRequestError('images must be an array')
-  return value.map((image, index) => {
-    expectObject(image, `images[${index}]`)
-    const mediaType = requireString(image.mediaType, `images[${index}].mediaType`)
-    if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(mediaType)) {
-      throw new BadRequestError(`images[${index}].mediaType is unsupported`)
-    }
-    return optionalFields({
-      mediaType,
-      data: requireString(image.data, `images[${index}].data`),
-      name: optionalString(image.name, `images[${index}].name`),
-    })
-  })
 }
 
 function normalizeGoalRef(value) {
@@ -155,6 +143,9 @@ async function callOperation(operation, name, ...args) {
   } catch (error) {
     if (error?.code === 'runtime-interface/capability-unavailable') {
       throw new CapabilityUnavailableError(error.message)
+    }
+    if (error?.code === 'runtime-interface/invalid-request') {
+      throw new BadRequestError(error.message)
     }
     throw error
   }

@@ -1,3 +1,9 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                           
+                                                                                                                                             
+                                                                                                                                                   
+                                                                                                                                             
+                                                                                                                                     
+import { markStreamFailure } from './stream-failure.js'
 
 /**
  * Versioned Session follow stream adapter owned by the runtime boundary.
@@ -14,9 +20,19 @@ export const CURRENT_STREAM_RUNTIME_VERSION = '0.1.5-rc.2'
 const SUPPORTED_VERSIONS = new Set([
   LEGACY_STREAM_RUNTIME_VERSION,
   CURRENT_STREAM_RUNTIME_VERSION,
+  '0.2.0-rc.2',
+  '0.2.1-rc.2',
 ])
-const DEFAULT_MAX_ASSISTANT_CHUNKS = 4096
-const MAX_ASSISTANT_CHUNKS = 65536
+// The legacy converter accumulates every chunk of the trailing attempt in
+// memory, so its cache bound stays at the original 4096.  The current runtime
+// forwards process-local frames directly and keeps no chunk cache at all, so
+// only the safe-integer stream bound applies there; the payload and send-queue
+// byte limits remain the real resource guard on that path.
+const LEGACY_MAX_ASSISTANT_CHUNKS = 4096
+// `maxChunks` remains a legacy converter option for callers that deliberately
+// choose a smaller/larger bounded cache; the current direct-forward path does
+// not use it as a cumulative stream limit.
+const MAX_CONFIGURED_CHUNKS = 65536
 
 function own(value, key) { return Object.prototype.hasOwnProperty.call(value, key) }
 function isRecord(value) { return value !== null && typeof value === 'object' && !Array.isArray(value) }
@@ -36,8 +52,23 @@ export class BrowserStreamError extends Error {
   }
 }
 
-function invalid(message, details) {
-  throw new BrowserStreamError('runtime-interface/invalid-stream', message, details)
+function invalid(message, details, failure) {
+  const error = new BrowserStreamError('runtime-interface/invalid-stream', message, details)
+  if (failure !== undefined) markStreamFailure(error, { source: 'interface', ...failure })
+  throw error
+}
+
+/** A bound was exceeded: the condition is terminal, never retried as-is. */
+function resourceLimit(message) {
+  throw markStreamFailure(
+    new BrowserStreamError('runtime-interface/stream-closed', message),
+    { source: 'interface', reason: 'resource-limit', recoverable: false },
+  )
+}
+
+/** One ordering error, always carrying the bounded expected/actual pair. */
+function sequenceGap(message, expected, actual) {
+  invalid(message, { expected, actual }, { reason: 'sequence-gap', recoverable: false })
 }
 
 function normalizeVersion(value, fallback) {
@@ -100,7 +131,7 @@ function eventOf(frame) {
   return undefined
 }
 
-function assertSnapshot(frame, requireAssistantStream, maxChunks = MAX_ASSISTANT_CHUNKS) {
+function assertSnapshot(frame, requireAssistantStream, maxChunks) {
   if (!isRecord(frame) || frame.type !== 'snapshot') invalid('Session follow stream must begin with a snapshot')
   if (!isSafeSequence(frame.cursor, -1)) invalid('Session snapshot cursor is invalid')
   if (!Array.isArray(frame.records)) invalid('Session snapshot records must be an array')
@@ -119,7 +150,9 @@ function assertSnapshot(frame, requireAssistantStream, maxChunks = MAX_ASSISTANT
     || !Array.isArray(attempt.stream)) {
     invalid('Session assistant stream baseline attempt is invalid')
   }
-  if (attempt.nextIndex > maxChunks || attempt.stream.length > attempt.nextIndex) invalid('Session assistant stream baseline exceeds its bound')
+  if ((maxChunks !== undefined && attempt.nextIndex > maxChunks) || attempt.stream.length > attempt.nextIndex) {
+    resourceLimit('Session assistant stream baseline exceeds its bound')
+  }
 }
 
 function assertDurableSequence(event, cursor) {
@@ -127,7 +160,7 @@ function assertDurableSequence(event, cursor) {
     invalid('Session follow emitted an invalid durable event')
   }
   if (event.seq !== cursor + 1) {
-    invalid(`Session follow durable sequence skipped ${String(cursor + 1)}`, { expectedSeq: cursor + 1, actualSeq: event.seq })
+    sequenceGap(`Session follow durable sequence skipped ${String(cursor + 1)}`, cursor + 1, event.seq)
   }
 }
 
@@ -151,7 +184,7 @@ function legacyChunk(event) {
   return { seq: event.seq, time: event.time, ...position, chunk: source.chunk }
 }
 
-function openingAttempt(snapshot, maxChunks = DEFAULT_MAX_ASSISTANT_CHUNKS) {
+function openingAttempt(snapshot, maxChunks = LEGACY_MAX_ASSISTANT_CHUNKS) {
   const candidates = []
   for (const record of snapshot.records) {
     const event = record?.event ?? record
@@ -198,12 +231,18 @@ export function createSessionFollowStreamEncoder({
   enabled,
   mapFrame = value => value,
   encodeFrame = value => value,
-  maxChunks = DEFAULT_MAX_ASSISTANT_CHUNKS,
+  maxChunks,
 } = {}) {
   const sourceVersion = normalizeVersion(upstreamVersion, LEGACY_STREAM_RUNTIME_VERSION)
   const browserVersion = normalizeVersion(targetVersion, CURRENT_STREAM_RUNTIME_VERSION)
   if (typeof mapFrame !== 'function' || typeof encodeFrame !== 'function') throw new TypeError('stream frame mappers must be functions')
-  if (!isSafeSequence(maxChunks) || maxChunks === 0 || maxChunks > MAX_ASSISTANT_CHUNKS) throw new TypeError('maxChunks is outside the bounded range')
+  const chunkBound = sourceVersion === LEGACY_STREAM_RUNTIME_VERSION
+    ? maxChunks ?? LEGACY_MAX_ASSISTANT_CHUNKS
+    : undefined
+  if (maxChunks !== undefined
+    && (!isSafeSequence(maxChunks) || maxChunks === 0 || maxChunks > MAX_CONFIGURED_CHUNKS)) {
+    throw new TypeError('maxChunks is outside the bounded range')
+  }
   const requested = enabled === undefined
     ? request === undefined || sessionFollowAssistantStreamRequested(request)
     : enabled === true
@@ -271,7 +310,8 @@ export function createSessionFollowStreamEncoder({
 
   function append(position, event) {
     if (activeAttempt === undefined) return start(position)
-    if (activeAttempt.nextIndex >= maxChunks) invalid('Legacy assistant stream exceeds its bound')
+    // The bound caps the next index, not the number of frames already emitted.
+    if (activeAttempt.nextIndex + 1 > chunkBound) resourceLimit('Legacy assistant stream exceeds its bound')
     const output = emit({
       type: 'assistant-stream',
       frame: {
@@ -292,13 +332,13 @@ export function createSessionFollowStreamEncoder({
       // Legacy snapshots have no assistantStream field.  The adapter derives
       // only a bounded trailing attempt from durable rows and preserves the
       // real snapshot cursor as its baseline.
-      assertSnapshot(frame, false, maxChunks)
+      assertSnapshot(frame, false, chunkBound)
       opened = true
       durableCursor = frame.cursor
       revision = 0
-      const opening = openingAttempt(frame, maxChunks)
+      const opening = openingAttempt(frame, chunkBound)
       if (opening !== undefined) {
-        if (opening.nextIndex > maxChunks) invalid('Legacy opening assistant stream exceeds its bound')
+        if (opening.nextIndex > chunkBound) resourceLimit('Legacy opening assistant stream exceeds its bound')
         activeAttempt = opening
         return emit({ ...frame, assistantStream: { revision: 0, activeAttempt: opening } })
       }
@@ -353,18 +393,29 @@ export function createSessionFollowStreamEncoder({
     return output
   }
 
+  /** Index and attempt identity are validated together so the reason is exact. */
+  function validateCurrentIndex(frame) {
+    if (activeAttempt === undefined || activeAttempt.attemptId !== frame.attemptId) {
+      invalid('Current assistant stream frame does not belong to the active attempt', undefined, { reason: 'attempt-mismatch', recoverable: false })
+    }
+    if (frame.index !== activeAttempt.nextIndex) {
+      sequenceGap('Current assistant stream index is not contiguous', activeAttempt.nextIndex, frame.index)
+    }
+  }
+
   function validateCurrentAssistantFrame(frame) {
     if (!isRecord(frame) || !['start', 'chunk', 'end'].includes(frame.type)) invalid('Current assistant stream frame type is invalid')
     if (!isBoundedString(frame.attemptId) || !isSafeSequence(frame.revision, 1)) invalid('Current assistant stream frame identity is invalid')
-    if (frame.revision !== revision + 1) invalid(`Session assistant stream skipped revision ${String(revision + 1)}`, { expectedRevision: revision + 1, actualRevision: frame.revision })
+    if (frame.revision !== revision + 1) sequenceGap(`Session assistant stream skipped revision ${String(revision + 1)}`, revision + 1, frame.revision)
     if (frame.type === 'start') {
       if (!isSafeSequence(frame.startedAfterSeq, -1) || !isSafeSequence(frame.turn) || !isSafeSequence(frame.step)) invalid('Current assistant stream start frame is invalid')
       if (activeAttempt !== undefined) invalid('Current assistant stream started a mismatched attempt')
     } else if (frame.type === 'chunk') {
-      if (!activeAttempt || activeAttempt.attemptId !== frame.attemptId || frame.index !== activeAttempt.nextIndex || !isSafeSequence(frame.time)) invalid('Current assistant stream chunk is out of order')
-      if (activeAttempt.nextIndex >= maxChunks) invalid('Current assistant stream exceeds its bound')
+      if (!isSafeSequence(frame.time)) invalid('Current assistant stream chunk time is invalid')
+      validateCurrentIndex(frame)
+      if (!isSafeSequence(activeAttempt.nextIndex + 1)) resourceLimit('Current assistant stream index exceeds the safe integer range')
     } else {
-      if (!activeAttempt || activeAttempt.attemptId !== frame.attemptId || frame.index !== activeAttempt.nextIndex) invalid('Current assistant stream end is out of order')
+      validateCurrentIndex(frame)
       if (!isRecord(frame.outcome) || !['committed', 'abandoned'].includes(frame.outcome.kind)) invalid('Current assistant stream outcome is invalid')
       if (frame.outcome.kind === 'committed'
         && (!['assistant/message', 'assistant/attempt'].includes(frame.outcome.eventType) || !isSafeSequence(frame.outcome.seq))) invalid('Current assistant stream committed outcome is invalid')
@@ -373,7 +424,7 @@ export function createSessionFollowStreamEncoder({
 
   function pushCurrent(frame) {
     if (!opened) {
-      assertSnapshot(frame, true, maxChunks)
+      assertSnapshot(frame, true)
       opened = true
       durableCursor = frame.cursor
       revision = frame.assistantStream.revision

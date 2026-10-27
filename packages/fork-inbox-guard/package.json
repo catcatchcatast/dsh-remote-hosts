@@ -1,0 +1,30 @@
+{
+  "name": "dsh-fork-inbox-guard",
+  "version": "0.2.0-interface.1",
+  "description": "Fork inbox isolation through the canonical runtime interface",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml",
+    "LICENSE",
+    "NOTICE",
+    "LICENSES",
+    "THIRD-PARTY-NOTICES.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "dsh-runtime-interface": "0.1.0-rc.1"
+  },
+  "license": "Apache-2.0"
+}

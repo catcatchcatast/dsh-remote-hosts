@@ -1,8 +1,55 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                
+import { installParentPause } from './parent-pause.js'
+                                                                                                                                                           
+import { createMobileDirectoryPort } from './mobile-directory.js'
+import { mobileContextHistoryEvent } from './mobile-history-context.js'
+                                                                                                                                               
+                                                                                                                                                     
+                                                                                                                                           
+                                                                                                                                               
+import { randomUUID } from 'node:crypto'
+import { createCarrier } from './http-carrier.js'
+                                                                                                                                           
+import { createSubagentCatalogReader } from './subagent-catalog.js'
+                                                                                                                                 
+import { readFileSync } from 'node:fs'
+                                                                                                                                                 
+import { createRequire } from 'node:module'
+import { adminCatalogRequest, adminCatalogResult } from './admin-catalog-wire.js'
+export { ADMIN_CATALOG_ENDPOINTS } from './admin-catalog-wire.js'
+export { MarketConfig, resolveMarketBootConfig, createMarketConfigPort, marketSettingsNamespaceState } from './market-config.js'
+import { installThinkingTranslationHost } from './translation-host.js'
+export { ThinkingTranslationConfig } from './translation-host.js'
+import z from '@deepseek-ai/schemastery'
+import { WORKSPACE_METHODS, WORKSPACE_FILE_ENDPOINTS, OFFICE_TO_PDF_ENDPOINTS, canonicalWorkspaceWire, browserWorkspaceWire, assertWorkspaceCapability } from './workspace-wire.js'
+export { WORKSPACE_FILE_ENDPOINTS, OFFICE_TO_PDF_ENDPOINTS, WORKSPACE_BINARY_ENDPOINTS, workspaceFileBytesRequest, workspaceIdentityReferences, mapWorkspaceRequest, scopeWorkspaceValue, scopeWorkspaceFrame } from './workspace-wire.js'
+                                                                                                                                             
+import { WEB_020_RUNTIME_VERSION, WEB_021_RUNTIME_VERSION, isWebRuntimeVersion, toolResultEvent, canonicalControl, browserControl, readLegacyProjections, legacyJobRows } from './web-020.js'
+export { WEB_020_RUNTIME_VERSION, scopeProjection, scopeJobFrame, createJobStreamEncoder, applyControlQueue } from './web-020.js'
+                                                                                                                                             
+                                                                                                                                             
+                                                                                                                                                   
+import { createHostInteractionSource, createInteractionPeerClient, registerHostInteractionProtocol } from './host-interactions.js'
+                                                                                                                                                       
+export { createHostInteractionSource, createInteractionPeerClient, isCoreInteractionFrame, interactionToBrowserFrame, decodeBrowserInteractionResult, INTERACTION_READ, INTERACTION_RESPOND } from './host-interactions.js'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { createDiagnosticJournal } from './diagnostics.js'
+import { classifyStreamFailure, markStreamFailure, streamFailureDiagnosticCode } from './stream-failure.js'
+                                                                                                                                                                     
+                                                                                                                                     
+                                                                                                                                               
+                                                                                                                                                                         
+                                                                                                                                             
 
 /** Official-runtime boundary for every rc1 compatibility package. */
 import { createAgentOperations } from './agent-operations.js'
+                                                                         
+import { installUserOnlyGoals } from './user-only-goals.js'
+                                                                                                                                                 
 import { mobileSubagentEvent } from './subagent-events.js'
 import { createSessionPersistencePort } from './session-persistence.js'
+import { createForkInboxIsolationPort } from './fork-inbox-isolation.js'
 import { MobileAssistantStream } from './mobile-assistant-stream.js'
 import { bindManagementConnection } from './management-binding.js'
 import { createLocalRuntimeRestart } from './local-runtime-restart.js'
@@ -35,13 +82,25 @@ export {
   BrowserStreamError,
   createBrowserStreamEncoder,
   createSessionFollowStreamEncoder,
+  LEGACY_STREAM_RUNTIME_VERSION,
+  CURRENT_STREAM_RUNTIME_VERSION,
   prepareSessionFollowPayload,
   prepareSessionFollowRequest,
   sessionFollowAssistantStreamRequested,
 } from './browser-stream.js'
+                                                                                                                                                   
+export {
+  classifyStreamFailure,
+  markStreamFailure,
+  sanitizeStreamFailure,
+  streamFailureDiagnosticCode,
+  STREAM_FAILURE_REASONS,
+  STREAM_FAILURE_SOURCES,
+  STREAM_FAILURE_STAGES,
+} from './stream-failure.js'
 export const name = 'runtime-interface'
 // Current connection.rpc.handle binds routes through its calling owner's webServer capability.
-export const inject = ['webServer', 'sessionController', 'workspaceController', 'connection', 'subagents', 'commands', 'goals', 'agentPresets', 'sessionPersistence']
+export const inject = ['typertGateway', 'webServer', 'sessionController', 'workspaceController', 'connection', 'subagents', 'commands', 'goals', 'agentPresets', 'sessionPersistence']
 
 export const RUNTIME_INTERFACE_VERSION = 1
 export const LEGACY_RUNTIME_VERSION = '0.1.2-rc.1'
@@ -50,9 +109,8 @@ export const HISTORY_EPOCH_CAPABILITY = 'history-epoch-v1'
 export const HISTORY_EPOCH_HEADER = 'x-dsh-history-epoch'
 export const LEGACY_HISTORY_EPOCH = 'legacy'
 
-const SUPPORTED_RUNTIME_VERSIONS = new Set([LEGACY_RUNTIME_VERSION, CURRENT_RUNTIME_VERSION])
-const SESSION_METHODS = Object.freeze(['attachment', 'cancel', 'canOpenWorkspacePath', 'control', 'create', 'follow', 'fork', 'list', 'modelCatalog', 'page', 'prompt', 'rename', 'search', 'selectModel', 'updateQueue'])
-const WORKSPACE_METHODS = Object.freeze(['archiveSession', 'create', 'delete', 'follow', 'insertBefore', 'insertSessionBefore', 'rename'])
+const SUPPORTED_RUNTIME_VERSIONS = new Set([LEGACY_RUNTIME_VERSION, CURRENT_RUNTIME_VERSION, WEB_020_RUNTIME_VERSION, WEB_021_RUNTIME_VERSION])
+const SESSION_METHODS = Object.freeze(['attachment', 'cancel', 'canOpenWorkspacePath', 'control', 'create', 'follow', 'fork', 'list', 'modelCatalog', 'page', 'prompt', 'rename', 'search', 'selectModel', 'updateQueue', 'projections'])
 const CONNECTION_METHODS = Object.freeze(['authenticatedUrl', 'requestRejection'])
 const SUBAGENT_METHODS = Object.freeze(['remoteExportList', 'prompt', 'interruptByParent'])
 const HISTORY_ENDPOINTS = new Set(['session/page', 'session/follow'])
@@ -238,7 +296,7 @@ function normalizeReplace(surfaceOp) {
 /** Turn a current or legacy upstream event into the stable canonical vocabulary. */
 export function upstreamToCanonicalEvent(event, { hostId } = {}) {
   if (!isRecord(event)) return event
-  const normalized = { ...event }
+  const normalized = { ...toolResultEvent(event, false) }
   const sourceSeq = event.sourceSeq ?? event.seq
   if (sourceSeq !== undefined) normalized.sourceSeq = nonNegativeInteger(sourceSeq, 'sourceSeq')
   if (event.seq !== undefined) normalized.seq = nonNegativeInteger(event.seq, 'seq')
@@ -249,6 +307,8 @@ export function upstreamToCanonicalEvent(event, { hostId } = {}) {
 
 /** Android history output conversion; legacy representation stays inside the boundary. */
 export function canonicalToMobileHistoryEvent(event) {
+  const context = mobileContextHistoryEvent(event)
+  if (context !== event) return context
   if (event?.type === 'subagent/catalog') return mobileSubagentEvent(event)
   if (event?.type === 'legacy/request-header' && event?.data?.legacyType === 'request/header' && isRecord(event.data.data?.header)) {
     const { system: _system, tools: _tools, ...header } = event.data.data.header
@@ -380,7 +440,7 @@ function canonicalWireValue(value, context) {
 export function upstreamToCanonicalWire(value, { hostId, upstreamVersion = LEGACY_RUNTIME_VERSION, endpoint, adapter } = {}) {
   const version = normalizeRuntimeVersion(upstreamVersion)
   const context = adapter ?? { hostId: hostId === undefined ? undefined : assertBoundedString(hostId, 'hostId', 256), version, sessionHistory: endpoint === undefined || HISTORY_ENDPOINTS.has(endpoint), streams: new LegacyStreamIndex() }
-  return canonicalWireValue(value, context)
+  return canonicalWireValue(canonicalWorkspaceWire(endpoint, value, version), context)
 }
 function browserHeader(header, target) {
   if (!isRecord(header)) return header
@@ -389,7 +449,7 @@ function browserHeader(header, target) {
   delete result.seed
   delete result.seedLength
   delete result.isSeeded
-  if (target === CURRENT_RUNTIME_VERSION) result.isSeeded = seed?.isSeeded === true
+  if (target === CURRENT_RUNTIME_VERSION || isWebRuntimeVersion(target)) result.isSeeded = seed?.isSeeded === true
   else if (seed?.isSeeded === true && Number.isSafeInteger(seed.inheritedEventCount)) result.seedLength = seed.inheritedEventCount
   return Object.freeze(result)
 }
@@ -406,16 +466,18 @@ function browserEvent(event, target) {
     }
   }
   if (target === LEGACY_RUNTIME_VERSION && CURRENT_TO_LEGACY_EVENT_RENAMES[result.type] !== undefined) result.type = CURRENT_TO_LEGACY_EVENT_RENAMES[result.type]
-  if (result.type === 'assistant/message' && own(result, 'sourceEventSeqs') && target === CURRENT_RUNTIME_VERSION) delete result.sourceEventSeqs
+  if (result.type === 'assistant/message' && own(result, 'sourceEventSeqs') && target !== LEGACY_RUNTIME_VERSION) delete result.sourceEventSeqs
   if (result.surfaceOp?.op === 'replace') {
     const { startSeq, endSeq } = normalizeReplace(result.surfaceOp)
     result.surfaceOp = target === LEGACY_RUNTIME_VERSION ? { op: 'replace', start: startSeq, end: endSeq } : { op: 'replace', startSeq, endSeq }
   }
-  return Object.freeze(result)
+  return Object.freeze(toolResultEvent(result, isWebRuntimeVersion(target)))
 }
 /** Maps canonical DTOs to an exact Browser target wire; canonical-only fields never leak. */
 export function canonicalToBrowserWire(value, targetVersion = CURRENT_RUNTIME_VERSION) {
   const target = normalizeRuntimeVersion(targetVersion)
+  value = browserWorkspaceWire(value, target)
+  if (['baseline', 'queue', 'jobs'].includes(value?.type)) value = browserControl(value, isWebRuntimeVersion(target))
   if (Array.isArray(value)) return Object.freeze(value.map(item => canonicalToBrowserWire(item, target)))
   if (!isRecord(value)) return value
   if (value.type === 'assistant-stream') {
@@ -526,11 +588,138 @@ export function historyEpochMetadata({ version = LEGACY_RUNTIME_VERSION, history
   return Object.freeze({ ...metadata, capabilities: runtimeCapabilities(normalizedVersion, [HISTORY_EPOCH_CAPABILITY]) })
 }
 
-/** Returned carrier has no raw bypass and maps every Host upstream into canonical DTOs. */
-export function wrapHostCarrier({ hostId, carrier, upstreamVersion = LEGACY_RUNTIME_VERSION, identity } = {}) {
+/**
+ * Interface-owned diagnostic trace for one stream generation.
+ *
+ * The interface is the only place that sees both the transport failure and the
+ * client's cancellation, so it - not the business layer - decides whether a
+ * termination was recoverable.  Exactly one terminal row is recorded per
+ * generation: an aborted consumer is a cancel, never an error followed by a
+ * normal end.  Only allow-listed metadata reaches the journal; no session
+ * identity, message text or raw error text leaves this function.
+ */
+function openStreamTrace({ diagnostics, endpoint, hostId, sessionId }) {
+  const sink = typeof diagnostics?.record === 'function' ? diagnostics : undefined
+  if (sink === undefined) return { observe() {}, terminate() {} }
+  const startedAt = Date.now()
+  const trace = { count: 0, lastSeq: undefined, terminated: false, decoded: false }
+  return {
+    observe(value) {
+      trace.count += 1
+      const sequence = streamDiagnosticSequence(value)
+      if (sequence !== undefined) trace.lastSeq = sequence
+      if (!trace.decoded && value?.type === 'snapshot') {
+        trace.decoded = true
+        sink.record({ phase: 'stream_open', endpoint, hostId, sessionId, count: trace.count, lastSeq: trace.lastSeq, durationMs: Date.now() - startedAt })
+      }
+    },
+    terminate(error, signal, stage = 'live') {
+      if (trace.terminated) return
+      trace.terminated = true
+      const row = {
+        endpoint, hostId, sessionId, count: trace.count, lastSeq: trace.lastSeq,
+        durationMs: Date.now() - startedAt, closeCode: streamCloseCode(error),
+      }
+      if (error === undefined || signal?.aborted) {
+        sink.record({ ...row, phase: error === undefined && !signal?.aborted ? 'stream_end' : 'stream_cancel' })
+        return
+      }
+      const failure = classifyStreamFailure(error, { stage })
+      sink.record({
+        ...row, phase: 'stream_error', code: streamFailureDiagnosticCode(failure.reason),
+        source: failure.source, reason: failure.reason, recoverable: failure.recoverable, stage: failure.stage,
+        ...(failure.expected === undefined ? {} : { expected: failure.expected }),
+        ...(failure.actual === undefined ? {} : { actual: failure.actual }),
+      })
+    },
+  }
+}
+
+function streamDiagnosticSequence(value) {
+  const candidates = [value?.cursor, value?.seq, value?.event?.seq, value?.value?.cursor]
+  return candidates.find(candidate => Number.isSafeInteger(candidate) && candidate >= 0)
+}
+
+/** Only a numeric transport close code belongs in the allow-listed column. */
+function streamCloseCode(error) {
+  return Number.isSafeInteger(error?.closeCode) && error.closeCode >= 0 ? error.closeCode : undefined
+}
+
+/** The existing authenticated Host description is read once per transport entry. */
+export async function readHostRuntimeVersion(carrier, signal) {
+  signal?.throwIfAborted()
+  let result
+  try { result = await carrier.call('host.describe', {}, signal) }
+  catch (error) {
+    signal?.throwIfAborted()
+    if (/^CARRIER_RESULT_HTTP_(?!401$|403$)\d{3}$/.test(error?.message ?? '') || error?.message === 'CARRIER_RESULT_INVALID' || error?.name === 'TimeoutError' || error?.name === 'SyntaxError') return undefined
+    throw error
+  }
+  signal?.throwIfAborted()
+  if (result?.ok !== true || typeof result.value?.version !== 'string') return undefined
+  try { return normalizeRuntimeVersion(result.value.version) }
+  catch { return undefined }
+}
+
+                                                                                          
+function versionAwareHostCarrier(options) {
+  const { carrier, versionSignal } = options
+  const fixedOptions = { ...options, versionSignal: undefined }
+  let current = wrapHostCarrier(fixedOptions)
+  let confirming
+  async function ensureCapability(endpoint, signal) {
+    signal?.throwIfAborted()
+    versionSignal.throwIfAborted()
+    if (!WORKSPACE_FILE_ENDPOINTS.includes(endpoint) && !OFFICE_TO_PDF_ENDPOINTS.includes(endpoint)) return current
+    try { assertWorkspaceCapability(endpoint, current.upstreamVersion); return current }
+    catch (error) { if (error.code !== 'runtime-interface/capability-unavailable') throw error }
+    if (!confirming) {
+      confirming = readHostRuntimeVersion(carrier, versionSignal).then(version => {
+        versionSignal.throwIfAborted()
+        if (version !== undefined) current = wrapHostCarrier({ ...fixedOptions, upstreamVersion: version, versionConfirmed: true })
+      }).finally(() => { confirming = undefined })
+    }
+    // 一名读取者取消只撤回自己的等待，不取消同entry另一读取者的版本发现。
+    let abort
+    const cancelled = new Promise((_, reject) => {
+      if (!signal) return
+      abort = () => reject(signal.reason)
+      signal.addEventListener('abort', abort, { once: true })
+      if (signal.aborted) abort()
+    })
+    try { await Promise.race([confirming, cancelled]) }
+    finally { if (abort) signal.removeEventListener('abort', abort) }
+    signal?.throwIfAborted()
+    versionSignal.throwIfAborted()
+    assertWorkspaceCapability(endpoint, current.upstreamVersion)
+    return current
+  }
+  return Object.freeze({
+    ...current,
+    get upstreamVersion() { return current.upstreamVersion },
+    ensureCapability,
+    async call(endpoint, payload, signal) {
+      const selected = await ensureCapability(endpoint, signal)
+      return selected.call(endpoint, payload, signal)
+    },
+    async *open(endpoint, payload, signal, options) {
+      const selected = await ensureCapability(endpoint, signal)
+      yield* selected.open(endpoint, payload, signal, options)
+    },
+    ...(typeof carrier.raw === 'function' ? { async raw(path, init = {}) {
+      const selected = await ensureCapability(path.startsWith('/api/') ? path.slice('/api/'.length) : '', init.signal)
+      return selected.raw(path, init)
+    } } : {}),
+  })
+}
+
+/** Map canonical operations and retain the existing bounded raw file transport. */
+export function wrapHostCarrier({ hostId, carrier, upstreamVersion = LEGACY_RUNTIME_VERSION, versionConfirmed = true, identity, diagnostics, versionSignal } = {}) {
+  if (versionSignal !== undefined) return versionAwareHostCarrier({ hostId, carrier, upstreamVersion, versionConfirmed, identity, diagnostics, versionSignal })
   assertBoundedString(hostId, 'hostId', 256)
   if (!isRecord(carrier) || typeof carrier.call !== 'function' || typeof carrier.open !== 'function') throw new TypeError('carrier must expose call/open')
   const version = normalizeRuntimeVersion(upstreamVersion)
+  const assertCapability = endpoint => assertWorkspaceCapability(endpoint, !versionConfirmed && (endpoint.startsWith('workspaceFiles/') || endpoint.startsWith('officeToPdf/') || endpoint === 'workspace/initializeDefault') ? undefined : version)
   if (identity !== undefined && !isRecord(identity)) throw new TypeError('identity must be an object')
   const toCanonicalRequest = identity?.toCanonicalRequest ?? ((_endpoint, payload) => payload)
   const toUpstreamRequest = identity?.toUpstreamRequest ?? ((_endpoint, payload) => canonicalToUpstreamWire(payload, version))
@@ -540,39 +729,70 @@ export function wrapHostCarrier({ hostId, carrier, upstreamVersion = LEGACY_RUNT
     const mapped = toCanonicalRequest(endpoint, payload, hostId)
     return endpoint === 'session/follow' ? prepareSessionFollowPayload(mapped, version) : mapped
   }
-  const mapRequest = (endpoint, payload) => toUpstreamRequest(endpoint, canonicalRequest(endpoint, payload), hostId)
+  const mapRequest = (endpoint, payload) => toUpstreamRequest(endpoint, adminCatalogRequest(endpoint, canonicalRequest(endpoint, payload), version), hostId)
   const makeState = () => ({ hostId, version, sessionHistory: false, streams: new LegacyStreamIndex() })
-  const mapResult = (endpoint, value, state) => toCanonicalResult(endpoint, upstreamToCanonicalWire(value, { hostId, upstreamVersion: version, endpoint, adapter: state }), hostId)
+  const mapResult = (endpoint, value, state) => toCanonicalResult(endpoint, upstreamToCanonicalWire(adminCatalogResult(endpoint, endpoint === 'session/control' ? canonicalControl(value) : value, version), { hostId, upstreamVersion: version, endpoint, adapter: state }), hostId)
   return Object.freeze({
     hostId,
-    upstreamVersion: version,
+    upstreamVersion: versionConfirmed ? version : undefined,
     runtimeInterfaceCarrier: true,
+    interactions: createInteractionPeerClient(carrier),
+    ...(typeof carrier.raw === 'function' ? { raw(path, init) {
+      // 校验绑定到实际entry，重连不能把旧版的能力许可带到另一代raw传输。
+      if (path === '/api/workspaceFiles/readBytes' || path === '/api/officeToPdf/render') assertCapability(path.slice('/api/'.length))
+      return carrier.raw(path, init)
+    } } : {}),
     async call(endpoint, canonicalRequest, signal) {
+      assertCapability(endpoint)
       const state = makeState(); state.sessionHistory = HISTORY_ENDPOINTS.has(endpoint)
+      if (!isWebRuntimeVersion(version) && endpoint === 'session/projections') return { ok: true, value: await readLegacyProjections(carrier, mapRequest(endpoint, canonicalRequest)?.args?.request, signal) }
+      if (!isWebRuntimeVersion(version) && endpoint.startsWith('job/')) throw new RuntimeInterfaceError('runtime-interface/capability-unavailable', 'This host has no independent job output or kill interface', { endpoint })
       return mapResult(endpoint, await carrier.call(endpoint, mapRequest(endpoint, canonicalRequest), signal), state)
     },
-    async *open(endpoint, canonicalRequest, signal) {
+    async *open(endpoint, canonicalRequest, signal, { diagnosticOwner = 'interface' } = {}) {
+      assertCapability(endpoint)
       const state = makeState(); state.sessionHistory = HISTORY_ENDPOINTS.has(endpoint)
       const input = toCanonicalRequest(endpoint, canonicalRequest, hostId)
       const assistantStream = endpoint === 'session/follow' && sessionFollowAssistantStreamRequested(input)
       const prepared = endpoint === 'session/follow' ? prepareSessionFollowPayload(input, version) : input
-      const source = await carrier.open(endpoint, toUpstreamRequest(endpoint, prepared, hostId), signal)
-      if (!assistantStream) {
-        for await (const value of source) yield mapResult(endpoint, value, state)
-        return
-      }
-      const encoder = createSessionFollowStreamEncoder({
-        upstreamVersion: version,
-        targetVersion: CURRENT_RUNTIME_VERSION,
-        request: input,
-        mapFrame: value => mapResult(endpoint, value, state),
-      })
+      // Browser Hub owns the full encoded subscription, including its timeout
+      // and queue cancellation. Direct mobile consumers keep interface tracing.
+      const trace = openStreamTrace({ diagnostics: diagnosticOwner === 'consumer' ? undefined : diagnostics, endpoint, hostId, sessionId: followSessionId(input) })
+      let source
+      let terminalError
+      let stage = 'bootstrap'
       try {
-        for await (const value of source) {
-          for (const frame of encoder.push(value)) yield frame
+        const request = toUpstreamRequest(endpoint, prepared, hostId)
+        if (!isWebRuntimeVersion(version) && endpoint === 'job/follow') throw new RuntimeInterfaceError('runtime-interface/capability-unavailable', 'This host has no independent job output interface', { endpoint })
+        source = !isWebRuntimeVersion(version) && endpoint === 'job/list' ? legacyJobRows(carrier, request?.args?.request, signal) : await carrier.open(endpoint, request, signal)
+        if (!assistantStream) {
+          for await (const value of source) {
+            const mapped = mapResult(endpoint, value, state)
+            trace.observe(value)
+            stage = 'live'
+            yield mapped
+          }
+          return
         }
+        const encoder = createSessionFollowStreamEncoder({
+          upstreamVersion: version,
+          targetVersion: CURRENT_RUNTIME_VERSION,
+          request: input,
+          mapFrame: value => mapResult(endpoint, value, state),
+        })
+        try {
+          for await (const value of source) {
+            trace.observe(value)
+            for (const frame of encoder.push(value)) { stage = 'live'; yield frame }
+          }
+        } finally {
+          encoder.close()
+        }
+      } catch (error) {
+        terminalError = markStreamFailure(error, classifyStreamFailure(error, { stage, signal }))
+        throw terminalError
       } finally {
-        encoder.close()
+        trace.terminate(terminalError, signal, stage)
       }
     },
   })
@@ -645,14 +865,26 @@ async function * mapSessionFollowStream(value, mapper, onClose) {
   }
 }
 
-function canonicalSessionPort(service, version, hostId, mobileAssistant) {
+function withoutCachedListWatermarks(result, version) {
+  if (result?.ok === true) return { ...result, value: withoutCachedListWatermarks(result.value, version) }
+  if (!Array.isArray(result?.items)) return result
+  return { ...result, items: result.items.map(item => {
+    const kind = item.projections?.kind
+    const unsequenced = kind === 'cached' || kind === 'migration-required' || (version === WEB_021_RUNTIME_VERSION && kind !== 'sequenced')
+    if (!isRecord(item.projections) || !unsequenced) return item
+    const { asOfSeq: _cacheWatermark, ...projections } = item.projections
+    return { ...item, projections }
+  }) }
+}
+
+function canonicalSessionPort(service, version, hostId, mobileAssistant, sessionQuery) {
   return createPort(service, SESSION_METHODS, 'sessionController', (method, value, args) => {
     const endpoint = `session/${method}`
     const adapter = canonicalAdapter(version, endpoint, hostId)
     if (method === 'follow') {
       const request = args[0]
       const sessionId = followSessionId(request)
-      const assistantStream = version === CURRENT_RUNTIME_VERSION && sessionFollowAssistantStreamRequested(request)
+      const assistantStream = version !== LEGACY_RUNTIME_VERSION && sessionFollowAssistantStreamRequested(request)
       const streamEncoder = createSessionFollowStreamEncoder({
         upstreamVersion: version,
         targetVersion: CURRENT_RUNTIME_VERSION,
@@ -687,12 +919,25 @@ function canonicalSessionPort(service, version, hostId, mobileAssistant) {
       }, () => streamEncoder.close())
     }
     if (method === 'control') {
-      return mapReturnedStream(value, frame => upstreamToCanonicalWire(frame, { hostId, upstreamVersion: version, endpoint, adapter }))
+      return mapReturnedStream(value, frame => upstreamToCanonicalWire(canonicalControl(frame), { hostId, upstreamVersion: version, endpoint, adapter }))
     }
-    return mapReturnedValue(value, result => upstreamToCanonicalWire(result, { hostId, upstreamVersion: version, endpoint, adapter }))
-  }, (method, args) => method === 'follow'
-    ? [prepareSessionFollowRequest(args[0], version, { forceAssistantStream: version === CURRENT_RUNTIME_VERSION }), ...args.slice(1)]
-    : args)
+    return mapReturnedValue(value, result => {
+      // 缓存投影的水位只属于缓存记录；移动端仍通过原首帧回退建立实时游标。
+      const mobileList = method === 'list' ? withoutCachedListWatermarks(result, version) : result
+      return upstreamToCanonicalWire(mobileList, { hostId, upstreamVersion: version, endpoint, adapter })
+    })
+  }, (method, args) => {
+    if (method === 'search' && isWebRuntimeVersion(version)) {
+      const query = typeof sessionQuery === 'function' ? sessionQuery() : sessionQuery
+      // The published SQLite query service exposes this validated policy. Do not open or scan an index.
+      if (query?.config?.openAt === 'never') {
+        throw new RuntimeInterfaceError('runtime-interface/capability-unavailable', 'Session search is disabled by the host indexing policy', { method: 'search', reason: 'session-query-disabled' })
+      }
+    }
+    return method === 'follow'
+      ? [prepareSessionFollowRequest(args[0], version, { forceAssistantStream: version !== LEGACY_RUNTIME_VERSION }), ...args.slice(1)]
+      : args
+  })
 }
 
 function canonicalWorkspacePort(service, version, hostId) {
@@ -701,7 +946,7 @@ function canonicalWorkspacePort(service, version, hostId) {
     const adapter = canonicalAdapter(version, endpoint, hostId)
     if (method === 'follow') return mapReturnedStream(value, frame => upstreamToCanonicalWire(frame, { hostId, upstreamVersion: version, endpoint, adapter }))
     return mapReturnedValue(value, result => upstreamToCanonicalWire(result, { hostId, upstreamVersion: version, endpoint, adapter }))
-  })
+  }, (method, args) => { assertWorkspaceCapability(`workspace/${method}`, version); return args })
 }
 
 function managementRpcRegistrar(binding) {
@@ -729,7 +974,7 @@ function canonicalEventSource(source, version, hostId, mobileAssistant, historyM
   ) })
   return Object.freeze({
     assistantSnapshots() {
-      return version === CURRENT_RUNTIME_VERSION
+      return version !== LEGACY_RUNTIME_VERSION
         ? mobileAssistant.snapshots().map(item => Object.freeze({ ...item, ...historyMetadata() })) : []
     },
     discardAssistantSession(sessionId) { mobileAssistant.disposeSession(sessionId) },
@@ -764,7 +1009,7 @@ function canonicalEventSource(source, version, hostId, mobileAssistant, historyM
         }
         if (eventName === 'session/created') {
           const session = args[0], ref = identity(session)
-          const firstLiveSeq = session?.firstLiveSeq
+          const firstLiveSeq = version === WEB_021_RUNTIME_VERSION ? session?.firstLifecycleSeq : session?.firstLiveSeq
           if (!Number.isSafeInteger(firstLiveSeq) || firstLiveSeq < 0 || typeof session?.snapshotEvents !== 'function') {
             return listener(Object.freeze({ ...ref, events: [] }))
           }
@@ -791,7 +1036,7 @@ export function normalizeRuntimeInterfaceConfig(value) {
   if (!isRecord(value)) throw new TypeError('runtime-interface config must be an object')
   const upstreamVersion = normalizeRuntimeVersion(value.upstreamVersion ?? LEGACY_RUNTIME_VERSION)
   const configuredEpoch = value.historyEpoch
-  if (upstreamVersion === CURRENT_RUNTIME_VERSION && (!isRecord(configuredEpoch))) {
+  if (upstreamVersion !== LEGACY_RUNTIME_VERSION && (!isRecord(configuredEpoch))) {
     throw new RuntimeInterfaceError('history-epoch-unavailable', 'A current runtime requires persisted historyEpoch dataset and generations', { baselineRequired: true })
   }
   let historyEpoch
@@ -823,13 +1068,50 @@ function normalizeLocalRuntimeConfig(value) {
   return normalizeManagedRuntimeDescriptor(value)
 }
 
+const installedRequire = createRequire(import.meta.url)
+/** Production selection uses published metadata at this installed boundary. */
+export function resolveInstalledRuntimeConfig(value = {}, readVersion = name => installedRequire(`${name}/package.json`).version) {
+  if (value === null) value = {}
+  if (!isRecord(value)) throw new TypeError('runtime-interface config must be an object')
+  let sessionVersion, workspaceVersion
+  try {
+    sessionVersion = readVersion('@deepseek-ai/dsh-api-session-controller')
+    workspaceVersion = readVersion('@deepseek-ai/dsh-api-workspace-controller')
+  } catch {
+    throw new RuntimeInterfaceError('runtime-interface/runtime-version-unavailable', 'Installed official controller versions could not be read')
+  }
+  if (sessionVersion !== workspaceVersion) throw new RuntimeInterfaceError('runtime-interface/runtime-version-inconsistent', 'Installed official controller versions differ')
+  const actualVersion = normalizeRuntimeVersion(sessionVersion)
+  return normalizeRuntimeInterfaceConfig({ ...value, upstreamVersion: actualVersion })
+}
+
+/** Persist through the official profile editor after activation; never write bundle files. */
+export function bindInstalledRuntimeConfigPersistence(ctx, config) {
+  const owner = ctx.fiber
+  return ctx.inject(['configEditor'], scope => {
+    scope.effect(() => {
+      const timer = setTimeout(async () => {
+        const entry = scope.configEditor.entries().find(entry => entry.fiber === owner)
+        if (!entry || entry.options.config?.upstreamVersion === config.upstreamVersion) return
+        try {
+          await scope.configEditor.edit(entry, current => ({ ...current, upstreamVersion: config.upstreamVersion }))
+        } catch {
+          // The selected adapter remains correct even if a read-only overlay prevents saving.
+          scope.logger?.warn('Official adapter version selected; profile version correction could not be saved')
+        }
+      }, 0)
+      return () => clearTimeout(timer)
+    })
+  })
+}
+
 export const Config = Object.freeze({
-  parse(value) { return normalizeRuntimeInterfaceConfig(value) },
+  parse(value) { return resolveInstalledRuntimeConfig(value) },
   '~standard': {
     version: 1,
     vendor: 'dsh-runtime-interface',
     validate(value) {
-      try { return { value: normalizeRuntimeInterfaceConfig(value) } }
+      try { return { value: resolveInstalledRuntimeConfig(value) } }
       catch (error) { return { issues: [{ message: configErrorMessage(error) }] } }
     },
   },
@@ -841,19 +1123,51 @@ export class RuntimeInterface {
   #hostId
   #registerManagementRpc
   #localBootstrapEndpoint
+  #registerHostInteractions
   #mobileAssistant = new MobileAssistantStream()
-  constructor({ sessionController, workspaceController, connection, managementBinding, subagents, commands, goals, agentPresets, sessionPersistence, upstreamVersion = LEGACY_RUNTIME_VERSION, historyEpoch, hostId = 'local', localRuntime, localRuntimeDescriptor, appExit, webServer } = {}) {
+  constructor({ sessionController, sessionQuery, workspaceController, jobController, connection, typertGateway, managementBinding, subagents, commands, goals, agentPresets, sessionPersistence, directoryPickerController, agents, subagentAgents = agents, agentDefaultModel, mobileHost, subscriptions, thinkingTranslation, forkInboxIsolation, upstreamVersion = LEGACY_RUNTIME_VERSION, historyEpoch, hostId = 'local', localRuntime, localRuntimeDescriptor, appExit, webServer, diagnostics } = {}) {
+    this.diagnostics = diagnostics ?? createDiagnosticJournal()
     this.#version = normalizeRuntimeVersion(upstreamVersion)
     this.#historyEpoch = historyEpoch
     this.#hostId = assertBoundedString(hostId, 'hostId', 256)
     // These are canonical business ports. No caller receives an official
     // controller, packed chunk row, or version-specific surface boundary.
-    this.session = canonicalSessionPort(sessionController, this.#version, this.#hostId, this.#mobileAssistant)
+    this.session = canonicalSessionPort(sessionController, this.#version, this.#hostId, this.#mobileAssistant, sessionQuery)
+    this.mobileHost = mobileHost ?? createMobileHostPort({ agentPresets, directoryPickerController, agents, agentDefaultModel })
+    this.subscriptions = subscriptions
+    this.thinkingTranslation = thinkingTranslation
+    this.forkInboxIsolation = forkInboxIsolation
     this.agentOperations = createAgentOperations({ sessionController, commands, goals, agentPresets, upstreamVersion: this.#version })
+    this.job = Object.freeze(Object.fromEntries(['list', 'follow', 'kill'].map(method => [method, (...args) => {
+      if (typeof jobController?.[method] !== 'function') throw new RuntimeInterfaceError('runtime-interface/capability-unavailable', 'Job operation is unavailable', { method })
+      const value = jobController[method](...args)
+      return method === 'kill' ? mapReturnedValue(value, result => Object.freeze({ ...result })) : mapReturnedStream(value, frame => Object.freeze({ ...frame }))
+    }])))
     this.workspace = canonicalWorkspacePort(workspaceController, this.#version, this.#hostId)
     this.sessionPersistence = createSessionPersistencePort({ service: sessionPersistence, ErrorType: RuntimeInterfaceError })
     this.connection = createPort(connection, CONNECTION_METHODS, 'connection')
-    this.subagents = createPort(subagents, SUBAGENT_METHODS, 'subagents', (_method, value) => mapReturnedValue(value, result => upstreamToCanonicalWire(result, { hostId: this.#hostId, upstreamVersion: this.#version, endpoint: 'subagents/list' })))
+    this.hostInteractions = createHostInteractionSource(typertGateway, { upstreamVersion: this.#version, peer: this.#version === WEB_021_RUNTIME_VERSION ? connection.browserPeer : undefined, sendResult: async (endpoint, payload, signal, peer) => {
+      if (this.#version === WEB_021_RUNTIME_VERSION) {
+        const rpcId = randomUUID()
+        const handler = connection.createSharedFetchHandler('/api')
+        const response = await handler.fetch(new Request(`http://127.0.0.1/api/${endpoint}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'client-request', rpcId, method: endpoint, payload }), signal,
+        }), peer)
+        const envelope = await response.json()
+        if (envelope.type !== 'server-response' || envelope.rpcId !== rpcId) throw new RuntimeInterfaceError('runtime-interface/invalid-response', 'Interaction result has no matching response')
+        return envelope.result
+      }
+      const lifetime = signal ?? new AbortController().signal
+      const origin = `http://127.0.0.1:${webServer.port}`
+      const carrier = await createCarrier(origin, this.connection.authenticatedUrl(origin + '/'), undefined, lifetime)
+      return carrier.call(endpoint, payload, lifetime)
+    } })
+    this.#registerHostInteractions = state => registerHostInteractionProtocol({ webServer, connection: this.connection, state, send: this.hostInteractions.respond })
+    const subagentPort = createPort(subagents ?? {}, SUBAGENT_METHODS, 'subagents', (_method, value) => mapReturnedValue(value, result => upstreamToCanonicalWire(result, { hostId: this.#hostId, upstreamVersion: this.#version, endpoint: 'subagents/list' })))
+    this.subagents = isWebRuntimeVersion(this.#version) && typeof subagents?.remoteExportList !== 'function' && typeof subagents?.listChildren === 'function'
+      ? Object.freeze({ ...subagentPort, remoteExportList: createSubagentCatalogReader(subagents, subagentAgents, RuntimeInterfaceError) })
+      : subagentPort
     this.#localBootstrapEndpoint = createLocalBootstrapEndpoint({ webServer, connection: this.connection })
     this.localRuntime = localRuntime ?? createLocalRuntimeRestart({ descriptor: localRuntimeDescriptor, appExit, webServer })
     this.#registerManagementRpc = managementRpcRegistrar(managementBinding ?? bindManagementConnection(undefined, connection, this.#version))
@@ -864,8 +1178,9 @@ export class RuntimeInterface {
   get capabilities() { return historyEpochMetadata({ version: this.#version, historyEpoch: this.#historyEpoch }).capabilities }
   describe() { return Object.freeze({ runtimeInterfaceVersion: RUNTIME_INTERFACE_VERSION, upstreamVersion: this.#version, ...historyEpochMetadata({ version: this.#version, historyEpoch: this.#historyEpoch }) }) }
   localBootstrapEndpoint(...args) { return this.#localBootstrapEndpoint(...args) }
+  localBootstrapCredentialAdapter() { return readFileSync(new URL('./mobile-bootstrap-auth.cjs', import.meta.url), 'utf8') }
   expectedHistoryEpoch(input) {
-    try { return readExpectedHistoryEpoch({ ...input, requireExpected: this.#version === CURRENT_RUNTIME_VERSION }) }
+    try { return readExpectedHistoryEpoch({ ...input, requireExpected: this.#version !== LEGACY_RUNTIME_VERSION }) }
     catch (error) {
       if (error?.code === 'history-epoch-required') throw new HistoryEpochError(error.code, this.describe().historyEpoch)
       throw error
@@ -875,13 +1190,14 @@ export class RuntimeInterface {
   decodeMobileIngress(options) {
     try { return decodeMobileIngress({
       ...options,
-      requireHistoryEpoch: this.#version === CURRENT_RUNTIME_VERSION,
+      requireHistoryEpoch: this.#version !== LEGACY_RUNTIME_VERSION,
       assertEpoch: expectedHistoryEpoch => this.assertHistoryEpoch(expectedHistoryEpoch),
     }) } catch (error) {
       if (error?.code === 'history-epoch-required') throw new HistoryEpochError(error.code, this.describe().historyEpoch)
       throw error
     }
   }
+  registerHostInteractions(state) { return this.#registerHostInteractions(state) }
   registerManagementRpc(options) { return this.#registerManagementRpc(options) }
   bindEventSource(source) { return canonicalEventSource(source, this.#version, this.#hostId, this.#mobileAssistant, () => historyEpochMetadata({ version: this.#version, historyEpoch: this.#historyEpoch })) }
   encodeBrowser(value, targetVersion = this.#version) { return canonicalToBrowserWire(value, targetVersion) }
@@ -894,29 +1210,139 @@ export class RuntimeInterface {
       encodeFrame: options.encodeFrame ?? (value => this.encodeBrowser(value, targetVersion)),
     })
   }
-  wrapHostCarrier(options) { return wrapHostCarrier({ ...options, upstreamVersion: options?.upstreamVersion ?? this.#version }) }
+  wrapHostCarrier(options) { return wrapHostCarrier({ diagnostics: this.diagnostics, ...options, upstreamVersion: options?.upstreamVersion ?? this.#version }) }
+  readHostRuntimeVersion(carrier, signal) { return readHostRuntimeVersion(carrier, signal) }
 }
 export function createRuntimeInterface(options) { return new RuntimeInterface(options) }
 /** Cordis entry: official controller objects bind only here. */
-export function apply(ctx, options = {}) {
+export async function apply(ctx, options = {}) {
   if (!ctx || typeof ctx.provide !== 'function') throw new TypeError('ctx.provide is required')
-  const config = normalizeRuntimeInterfaceConfig(options)
+  const config = resolveInstalledRuntimeConfig(options)
+  bindInstalledRuntimeConfigPersistence(ctx, config)
+  ctx.inject(['tools', 'agents'], scope => scope.effect(() => installUserOnlyGoals(scope), 'runtime-interface: user-only goal creation'))
+  if (config.upstreamVersion === WEB_021_RUNTIME_VERSION) ctx.inject(['agents', 'sessionProjections'], scope => scope.effect(() => installParentPause(scope), 'runtime-interface: human subtree pause'))
+                                                                                                                                                     
+  // Keep the file-upload adapter lazy: older runtime-interface consumers do
+  // not load Host-only filesystem and credential peers just by importing the
+  // package. The stable service appears only when the official capabilities
+  // required by the compatibility package are present.
+  ctx.inject(['tools', 'fs', 'systemPrompt', 'webServer', 'connection', 'sessions', 'credentials', 'attachments', 'llm', 'agents', 'agentDefaultModel'], async bound => {
+    const { createFileUploadHostBinding } = await import('./file-upload-host.js')
+    const binding = createFileUploadHostBinding(bound)
+    bound.provide('fileUploadInterface', binding.port)
+    // The official upload-receipt store is optional on older Hosts. Bind it
+    // when present without making the complete compatibility interface wait
+    // for a service that those Hosts do not provide.
+    bound.inject(['fileUploads'], uploadScope => {
+      binding.bindFileUploads(uploadScope.fileUploads)
+      return () => binding.bindFileUploads(undefined)
+    })
+  })
+  let hostServices, defaultModelServices, directoryServices
+                                                                                   
+  ctx.inject(['agents'], bound => {
+    hostServices = bound
+    return () => { if (hostServices === bound) hostServices = undefined }
+  })
+  ctx.inject(['agentDefaultModel'], bound => {
+    defaultModelServices = bound
+    return () => { if (defaultModelServices === bound) defaultModelServices = undefined }
+  })
+  ctx.inject(['directoryPickerController'], bound => {
+    directoryServices = bound
+    return () => { if (directoryServices === bound) directoryServices = undefined }
+  })
+  const mobileDirectory = createMobileDirectoryPort(ctx, {
+    upstreamVersion: config.upstreamVersion,
+    getController: () => directoryServices?.directoryPickerController,
+  })
+  const appExit = ctx.get?.('appExit')
   const runtimeInterface = createRuntimeInterface({
     sessionController: ctx.sessionController,
+    sessionQuery: () => ctx.get?.('sessionQuery'),
     workspaceController: ctx.workspaceController,
+    jobController: ctx.get?.('jobController'),
     connection: ctx.connection,
+    typertGateway: ctx.typertGateway,
     managementBinding: bindManagementConnection(ctx, ctx.connection, config.upstreamVersion),
+    diagnostics: createDiagnosticJournal({ file: join(process.env.DSH_HOME?.trim() || join(homedir(), ".dsh"), "diagnostics", `remote-hosts-${ctx.webServer.port}.jsonl`) }),
     subagents: ctx.subagents,
+    subagentAgents: () => ctx.get?.('agents'),
     commands: ctx.commands,
     goals: ctx.goals,
     agentPresets: ctx.agentPresets,
     sessionPersistence: ctx.sessionPersistence,
+    forkInboxIsolation: createForkInboxIsolationPort(ctx, {
+      upstreamVersion: config.upstreamVersion,
+      persistence: createSessionPersistencePort({ service: ctx.sessionPersistence, ErrorType: RuntimeInterfaceError }),
+    }),
+    mobileHost: createMobileHostPort({
+      agentPresets: ctx.agentPresets,
+      get agents() { return hostServices?.agents },
+      get agentDefaultModel() { return defaultModelServices?.agentDefaultModel },
+      get directoryPickerController() { return mobileDirectory },
+    }),
+    subscriptions: Object.freeze({ install(config) {
+      let disposed = false
+      const fiber = ctx.inject(['llm'], async bound => {
+        let active = true
+        bound.effect(() => () => { active = false })
+        const { installSubscriptions } = await import('./subscriptions.js')
+        if (disposed || !active) return
+        return installSubscriptions(bound, { ...config, isActive: () => !disposed && active })
+      })
+      // The business plugin owns this disposer. No Fiber or official service
+      // escapes, and unmount removes the readiness gate and registry wrapper.
+      return () => { disposed = true; return fiber.dispose() }
+    } }),
+    thinkingTranslation: Object.freeze({ install(policy) { return installThinkingTranslationHost(ctx, policy) } }),
     localRuntimeDescriptor: config.localRestart,
-    appExit: typeof ctx.appExit === 'function' ? ctx.appExit : undefined,
+    appExit: typeof appExit === 'function' ? appExit : undefined,
     webServer: ctx.webServer,
     upstreamVersion: config.upstreamVersion,
     ...(config.historyEpoch === undefined ? {} : { historyEpoch: config.historyEpoch }),
   })
   ctx.provide('runtimeInterface', runtimeInterface)
-  return runtimeInterface
+}
+
+export { toMobileToolSummary } from './mobile-tool-summary.js'
+
+// New settings forms project volatile fields from the owning plugin Config.
+// Legacy installations keep their existing codex-subscription namespace.
+const subscriptionField = schema => typeof schema.volatile === 'function' ? schema.volatile() : schema
+export const SubscriptionsConfig = z.object({
+  quickQuotaVisible: subscriptionField(z.boolean().default(false)),
+  searchProvider: subscriptionField(z.union(['auto', 'dsh', 'codex']).default('auto')),
+})
+
+function createMobileHostPort(ctx) {
+  return Object.freeze({
+    async presets() {
+      const service = ctx.agentPresets
+      if (typeof service?.remoteExportList !== 'function') throw new RuntimeInterfaceError('runtime-interface/capability-unavailable', 'agent preset roster is unavailable')
+      const roster = unwrapPortResult(await service.remoteExportList())
+      if (!isRecord(roster) || !Array.isArray(roster.presets)) {
+        throw new RuntimeInterfaceError('runtime-interface/capability-unavailable', 'agent preset roster is unavailable')
+      }
+      // Mobile's stable catalog explicitly marks unsupported authoring. The
+      // current registry omits authorable; legacy rosters omit hasDocument.
+      return {
+        presets: roster.presets,
+        authorable: typeof roster.authorable === 'boolean' ? roster.authorable : false,
+        hasDocument: typeof roster.hasDocument === 'boolean' ? roster.hasDocument : false,
+      }
+    },
+    listDirectory(path, signal) { return ctx.directoryPickerController.list(path, signal) },
+    createDirectory(path, name) { return ctx.directoryPickerController.createDirectory(path, name) },
+    async defaultSelection() { return ctx.agentDefaultModel?.currentSelection?.() },
+    async attachedCount() { const rows = await ctx.agents?.list?.(); return Array.isArray(rows) ? rows.length : undefined },
+  })
+}
+function unwrapPortResult(value) {
+  if (value && typeof value.ok === 'boolean') { if (!value.ok) throw value.error ?? new Error('controller returned a failed result'); return value.value }
+  if (value && value.result && typeof value.result.ok === 'boolean') {
+    if (!value.result.ok) throw value.result.error ?? new Error('controller returned a failed result')
+    return value.result.value
+  }
+  return value
 }

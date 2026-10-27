@@ -1,3 +1,4 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                     
 
 const DEFAULT_MAX_BYTES_PER_SESSION = 1024 * 1024
 const DEFAULT_MAX_ACTIVE_ATTEMPTS = 64

@@ -1,3 +1,6 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                   
+                                                                                                                                     
+                                                                                                                                             
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { existsSync, readFileSync } from 'node:fs'
@@ -60,6 +63,7 @@ export function apply(ctx) {
     helperReadable,
     control,
     localRuntime: ctx.runtimeInterface.localRuntime,
+    diagnostics: ctx.runtimeInterface.diagnostics,
   })
   if (typeof ctx.runtimeInterface?.registerManagementRpc !== 'function') throw new TypeError('management interface is required')
   return ctx.effect(() => {

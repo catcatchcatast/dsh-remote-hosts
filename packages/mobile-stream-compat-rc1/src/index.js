@@ -1,3 +1,7 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                           
+                                                                                                                                                                     
+                                                                                                                                                                       
+                                                                                                                                     
 /**
  * Loopback-only RC1 mobile Session sync compatibility for the official DSH
  * 0.1.2-rc.1 controller faces. The sibling mobile-session-sync-rc1 package
@@ -6,10 +10,16 @@
  * deliberately does not depend on the removed rc.8 proxy layer or on an
  * implicit/current Host selection.
  *
+ *                                                                                                                                       
+ *                                                                                                                                             
+ *                                                                                                                                                   
+ *                                                                                                                                                           
+ *                                                                                                                                                                       
+ *                                                                                                                               
  */
 
 import { randomUUID } from 'node:crypto'
-import { canonicalToMobileHistoryEvent } from 'dsh-runtime-interface'
+import { canonicalToMobileHistoryEvent, toMobileToolSummary } from 'dsh-runtime-interface'
 
 const name = 'mobile-stream-compat-rc1'
 const inject = [
@@ -2858,26 +2868,6 @@ function normalizeMobileProjectionBlock(value) {
 		values: safeValues
 	};
 }
-function safeToolView(view) {
-	const record = asRecord(view);
-	if (record === void 0) return void 0;
-	const result = {};
-	const card = boundedString(record.card, 128);
-	if (card !== void 0) result.card = card;
-	for (const key of [
-		"title",
-		"description",
-		"signal"
-	]) {
-		const string = boundedString(record[key], 512);
-		if (string !== void 0) result[key] = string.slice(0, 512);
-	}
-	const kind = boundedString(record.kind, 128);
-	if (kind !== void 0) result.kind = kind;
-	const exitCode = integerValue(record.exitCode);
-	if (exitCode !== void 0) result.exitCode = exitCode;
-	return Object.keys(result).length === 0 ? void 0 : result;
-}
 function safeGoal(value) {
 	const record = asRecord(value);
 	if (record === void 0) return void 0;
@@ -2964,17 +2954,29 @@ function convertMobileHistoryEntry(entry, sessionId, state, options = defaultV3O
 	const data = asRecord(raw.data) ?? {};
 	const body = {};
 	// Preserve the server's surface identity: text equality cannot identify a final chunk replacement.
-	if (["user/message", "assistant/message", "tool/result"].includes(type)) {
+	if (["user/message", "assistant/message", "tool/result"].includes(type) || (type === "system/message" && data.mobileActivity === "context")) {
 		if (raw.surfaceOp === "append") body.surfaceOp = "append";
 		else if (raw.surfaceOp !== undefined) {
 			const op = asRecord(raw.surfaceOp);
-			if (op?.op !== "replace" || !Number.isSafeInteger(op.startSeq) || !Number.isSafeInteger(op.endSeq) || op.startSeq < 0 || op.endSeq < op.startSeq) {
+                                                                                                                                                  
+			// 两端是有序表面中的节点身份；先前替换可使节点顺序与序号大小不同。
+			if (op?.op !== "replace" || !isSafeSequence(op.startSeq) || !isSafeSequence(op.endSeq) || op.startSeq >= seq || op.endSeq >= seq) {
 				throw new BaselineRecoveryError("unknown-surface-operation");
 			}
 			body.surfaceOp = { op: "replace", startSeq: op.startSeq, endSeq: op.endSeq };
 		}
 	}
 	switch (type) {
+		case "system/message": {
+            // Only the interface-owned mobile activity envelope is projected;
+            // existing official system-message behavior stays unchanged.
+            if (data.mobileActivity !== "context") break;
+            const message = safeMessage(data.message, state, sessionId, seq, options, "message.content");
+            if (message !== void 0) body.message = message;
+            const summary = boundedString(data.summary, 128);
+            if (summary !== void 0) body.summary = summary;
+            break;
+        }
 		case "user/message": {
 			const message = safeMessage(data, state, sessionId, seq, options, "message.content");
 			if (message !== void 0) body.message = message;
@@ -3045,8 +3047,9 @@ function convertMobileHistoryEntry(entry, sessionId, state, options = defaultV3O
 			const name = stringValue(data.name);
 			if (callId !== void 0) body.callId = callId;
 			if (name !== void 0) body.name = name;
-			const view = entry.view?.for === "call" ? safeToolView(entry.view.view) : void 0;
-			if (view !== void 0) body.summary = view;
+			const view = entry.view?.for === "call" ? entry.view.view : void 0;
+			const summary = toMobileToolSummary({ name, arguments: data.arguments, view });
+			if (summary !== void 0) body.summary = summary;
 			const args = stringValue(data.arguments);
 			const safeArgs = args === void 0 ? void 0 : safeToolArguments(args);
 			if (safeArgs !== void 0 && safeArgs.length > 0) body.detailRef = state.putDetail(sessionId, seq, "tool.call.arguments", safeArgs, "application/json");
@@ -3055,8 +3058,9 @@ function convertMobileHistoryEntry(entry, sessionId, state, options = defaultV3O
 		case "tool/result": {
 			const callId = toolCallId(data);
 			if (callId !== void 0) body.callId = callId;
-			const view = entry.view?.for === "result" ? safeToolView(entry.view.view) : void 0;
-			if (view !== void 0) body.summary = view;
+			const view = entry.view?.for === "result" ? entry.view.view : void 0;
+			const summary = toMobileToolSummary({ view });
+			if (summary !== void 0) body.summary = summary;
 			const contentHasError = Array.isArray(asRecord(data.message)?.content) && (asRecord(data.message)?.content).some((item) => asRecord(item)?.isError === true);
 			const failure = failureCategory(data.error) ?? (contentHasError ? "tool-error" : void 0);
 			if (failure !== void 0) body.failureKind = failure;
@@ -3121,6 +3125,7 @@ function convertMobileHistoryEntry(entry, sessionId, state, options = defaultV3O
 			break;
 		}
 		case "subagent/update": {
+                                                                                                                                                    
 			for (const key of [
 				"agentId",
 				"childSessionId",

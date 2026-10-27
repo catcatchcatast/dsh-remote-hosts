@@ -3,6 +3,8 @@
  * controller faces. This adapter deliberately does not depend on the removed
  * rc.8 proxy layer or on an implicit/current Host selection.
  *
+ *                                                                                                                                                         
+ *                                                                                                                                   
  */
 
 import { randomUUID } from 'node:crypto'

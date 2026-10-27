@@ -1,0 +1,57 @@
+{
+  "name": "dsh-file-upload",
+  "version": "0.7.0-rc1.1",
+  "description": "RC1 compatibility build of dsh-file-upload 0.7.0 over dsh-runtime-interface",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "LICENSE",
+    "CHANGELOG.md",
+    "README.md",
+    "README.zh.md"
+  ],
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "dsh-runtime-interface"
+      ],
+      "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "build": "tsdown --config tsdown.config.mjs"
+  },
+  "dependencies": {
+    "dsh-runtime-interface": "workspace:*",
+    "mammoth": "^1.8.0",
+    "markitdown-node": "^1.5.2",
+    "pdfjs-dist": "^4.10.38",
+    "read-excel-file": "^5.8.7"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.2 || 4.0.4",
+    "react": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@types/react": "~18.3.1",
+    "react": "18.3.1",
+    "tsdown": "0.22.2",
+    "typescript": "^6.0.3"
+  },
+  "private": true
+}

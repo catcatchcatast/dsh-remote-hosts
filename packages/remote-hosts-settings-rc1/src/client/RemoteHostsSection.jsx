@@ -1,3 +1,6 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                   
+                                                                                                                                     
+                                                                                                                                             
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 const card = {
@@ -29,6 +32,33 @@ const input = {
 }
 const muted = { margin: 0, fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary)' }
 const optionStyle = { color: 'var(--dsw-alias-label-primary, #222)', background: 'var(--dsw-alias-bg-base, #fff)' }
+
+function browserDiagnosticsSnapshot() {
+  if (typeof window === 'undefined') return 'notAvailable'
+  const diagnostics = window.__DSH_REMOTE_DIAGNOSTICS__
+  if (typeof diagnostics?.snapshot !== 'function') return 'notAvailable'
+  try {
+    return diagnostics.snapshot() ?? 'notAvailable'
+  } catch {
+    return 'notAvailable'
+  }
+}
+
+function downloadDiagnostics(value) {
+  const objectUrl = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' }))
+  const link = document.createElement('a')
+  link.href = objectUrl
+  link.download = 'dsh-remote-diagnostics.json'
+  try {
+    document.body?.appendChild(link)
+    link.click()
+  } finally {
+    link.remove()
+    const revoke = () => URL.revokeObjectURL(objectUrl)
+    if (typeof window !== 'undefined' && typeof window.setTimeout === 'function') window.setTimeout(revoke, 0)
+    else revoke()
+  }
+}
 
 
 function errorText(t, code) {
@@ -96,10 +126,11 @@ export function RemoteHostsSection({ hostsApi, t }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [exportBusy, setExportBusy] = useState(false)
   const [aliases, setAliases] = useState([])
   const [draft, setDraft] = useState(null)
   const [editingId, setEditingId] = useState(null)
-  const requests = useRef({ live: true, generation: 0, refreshing: false, mutating: false })
+  const requests = useRef({ live: true, generation: 0, refreshing: false, mutating: false, exporting: false })
 
   const refresh = useCallback(async () => {
     const state = requests.current
@@ -120,6 +151,8 @@ export function RemoteHostsSection({ hostsApi, t }) {
   }, [hostsApi, t])
 
   useEffect(() => {
+                                                                                           
+    const releaseInventory = hostsApi.mountStatusView?.()
     requests.current.live = true
     void refresh()
     const timer = setInterval(() => { void refresh() }, 4000)
@@ -127,6 +160,7 @@ export function RemoteHostsSection({ hostsApi, t }) {
       clearInterval(timer)
       requests.current.live = false
       requests.current.generation++
+      releaseInventory?.()
     }
   }, [refresh])
 
@@ -204,13 +238,43 @@ export function RemoteHostsSection({ hostsApi, t }) {
     return run(action, { hostId: host.id })
   }
 
+  const exportDiagnostics = async () => {
+    const state = requests.current
+    if (!state.live || state.mutating || state.exporting) return
+    state.exporting = true
+    setExportBusy(true)
+    try {
+      const serverDiagnostics = await hostsApi.call('exportDiagnostics', {})
+      if (!state.live) return
+      downloadDiagnostics({ ...serverDiagnostics, browser: browserDiagnosticsSnapshot() })
+      setError('')
+    } catch (reason) {
+      if (!state.live) return
+      setError(errorText(t, reason.code ?? reason.message))
+    } finally {
+      state.exporting = false
+      if (state.live) setExportBusy(false)
+    }
+  }
+
+  const pageBusy = busy || exportBusy
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 640, color: 'var(--dsw-alias-label-primary)' }}>
       <h2 style={{ margin: 0, fontSize: 16 }}>{t('title')}</h2>
       <p style={muted}>{t('intro')}</p>
+      <p style={muted}>{t('diagnosticsScope')}</p>
+      <button
+        type="button"
+        disabled={pageBusy}
+        style={{ ...button, alignSelf: 'flex-start' }}
+        onClick={() => { void exportDiagnostics() }}
+      >
+        {exportBusy ? t('exportDiagnosticsBusy') : t('exportDiagnostics')}
+      </button>
       {error && <p style={muted}>{error}</p>}
       {(data?.hosts ?? []).map(host => (
-        <HostCard key={host.id} host={host} t={t} busy={busy} onAction={onAction} onEdit={openEdit} />
+        <HostCard key={host.id} host={host} t={t} busy={pageBusy} onAction={onAction} onEdit={openEdit} />
       ))}
       {draft ? (
         <section style={card}>
@@ -242,12 +306,12 @@ export function RemoteHostsSection({ hostsApi, t }) {
             </>
           )}
           <div style={row}>
-            <button type="button" style={button} disabled={busy || (editingId === null && !draft.alias)} onClick={() => { void saveDraft() }}>{t('save')}</button>
-            <button type="button" style={button} disabled={busy} onClick={() => { setDraft(null); setEditingId(null) }}>{t('cancel')}</button>
+            <button type="button" style={button} disabled={pageBusy || (editingId === null && !draft.alias)} onClick={() => { void saveDraft() }}>{t('save')}</button>
+            <button type="button" style={button} disabled={pageBusy} onClick={() => { setDraft(null); setEditingId(null) }}>{t('cancel')}</button>
           </div>
         </section>
       ) : (
-        <button type="button" disabled={busy} style={{ ...button, alignSelf: 'flex-start' }} onClick={() => { void openAdd() }}>{t('add')}</button>
+        <button type="button" disabled={pageBusy} style={{ ...button, alignSelf: 'flex-start' }} onClick={() => { void openAdd() }}>{t('add')}</button>
       )}
     </div>
   )

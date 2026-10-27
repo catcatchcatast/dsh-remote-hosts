@@ -1,0 +1,60 @@
+{
+  "name": "dsh-remote-hosts",
+  "version": "0.2.0-rc.1",
+  "description": "Remote hosts and mobile synchronization with native workspace UI",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src/index.js",
+    "lib",
+    "module-sources.json",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "LICENSE.composer-history",
+    "NOTICE.composer-history",
+    "LICENSE",
+    "NOTICE",
+    "LICENSES",
+    "THIRD-PARTY-NOTICES.md"
+  ],
+  "license": "Apache-2.0",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "dsh-runtime-interface",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ],
+      "external": [
+        "react",
+        "react/jsx-runtime",
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/dsh-client-store"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "ws": "8.21.3"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "dsh-runtime-interface": "0.1.0-rc.1"
+  },
+  "devDependencies": {
+    "tsdown": "0.22.2",
+    "react": "18.3.1"
+  }
+}

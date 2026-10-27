@@ -1,6 +1,7 @@
 {
   "name": "dsh-mobile-interactions-compat-rc1",
   "version": "0.1.0-rc.1",
+  "private": true,
   "type": "module",
   "main": "./src/index.js",
   "exports": {

@@ -1,9 +1,18 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                             
+                                                                                                                                                     
+                                                                                                                                                                   
+                                                                                                                                             
+                                                                                                                                             
+                                                                                                                                     
+                                                                                                                                                     
 import { WebSocketServer } from 'ws'
+import { classifyStreamFailure, markStreamFailure } from 'dsh-runtime-interface'
+import { decodeBrowserStreamFrame, encodeBrowserStreamFailure } from 'dsh-runtime-interface/browser'
 
 export const BROWSER_STREAM_PATH = '/api/browser-host-hub-rc1/streams'
 
 const DEFAULT_MAX_FRAME_BYTES = 16 * 1024 * 1024
-const STREAM_ENDPOINTS = new Set(['workspace/follow', 'session/control', 'session/follow', '$events'])
+const STREAM_ENDPOINTS = new Set(['workspaceFiles/changes', 'workspace/follow', 'session/control', 'session/follow', 'job/list', 'job/follow', '$events'])
 
 const byteLength = value => Buffer.byteLength(value, 'utf8')
 const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -16,25 +25,52 @@ function protocolError(code, message, details = {}) {
   return { code, message, details }
 }
 
-function streamError(error, fallbackCode = 'browser-host-hub-rc1/stream-failure') {
-  if (isRecord(error) && typeof error.code === 'string' && typeof error.message === 'string') {
-    return protocolError(error.code, error.message, isRecord(error.details) ? error.details : {})
-  }
-  return protocolError(fallbackCode, error instanceof Error && error.message ? error.message : 'Browser stream failed')
+function streamError(error, stage = 'live') {
+  return encodeBrowserStreamFailure(error, { stage })
 }
 
-class FairSocketSender {
+function backpressureError(limit) {
+  return protocolError(
+    'browser-host-hub-rc1/stream-backpressure',
+    'Browser stream exceeded its bounded send queue',
+    { limit },
+  )
+}
+
+function transportError(value) {
+  if (value instanceof Error) {
+    const failure = classifyStreamFailure(value, { stage: 'live' })
+    if (failure.reason !== 'unknown') return value
+    return Object.assign(value, { code: 'browser-host-hub-rc1/stream-disconnected' })
+  }
+  if (isRecord(value) && typeof value.code === 'string' && typeof value.message === 'string') {
+    const failure = classifyStreamFailure(value, { stage: 'live' })
+    if (failure.reason !== 'unknown') return value
+  }
+  return Object.assign(new Error('Browser stream WebSocket disconnected'), {
+    code: 'browser-host-hub-rc1/stream-disconnected',
+  })
+}
+
+function abortError(error, stage) {
+  const reason = error instanceof Error
+    ? error
+    : Object.assign(new Error(typeof error?.message === 'string' ? error.message : 'Browser stream failed'), {
+        ...(typeof error?.code === 'string' ? { code: error.code } : {}),
+        ...(isRecord(error?.details) ? { details: error.details } : {}),
+      })
+  return markStreamFailure(reason, classifyStreamFailure(reason, { stage }))
+}
+
+class BoundedSocketSender {
   #socket
   #maxFrameBytes
   #maxStreamQueuedBytes
   #maxSocketQueuedBytes
   #onOverflow
   #onFailure
-  #queues = new Map()
-  #ready = []
+  #streams = new Map()
   #queuedBytes = 0
-  #sending = false
-  #inFlightStream
   #closed = false
 
   constructor(socket, options, onOverflow, onFailure) {
@@ -46,102 +82,62 @@ class FairSocketSender {
     this.#onFailure = onFailure
   }
 
-  enqueue(streamId, value, force = false) {
+  enqueue(streamId, value, force = false, maxFrameBytes = this.#maxFrameBytes, onSent) {
     if (this.#closed || this.#socket.readyState !== 1) return false
     const text = JSON.stringify(value)
     const bytes = byteLength(text)
-    if (bytes > this.#maxFrameBytes) {
-      if (force) this.#onFailure(new Error('terminal stream frame exceeds the configured frame limit'))
+    if (bytes > maxFrameBytes) {
+      if (force) this.#onFailure(backpressureError('frame'))
       else this.#onOverflow(streamId, 'frame')
       return false
     }
-    const queue = this.#queue(streamId)
-    if (force && (queue.bytes + bytes > this.#maxStreamQueuedBytes || this.#queuedBytes + bytes > this.#maxSocketQueuedBytes)) {
-      this.#onFailure(new Error('terminal stream frame exceeds the bounded send queue'))
+    let stream = this.#streams.get(streamId)
+    const streamBytes = (stream?.bytes ?? 0) + bytes
+    const terminalAfterItem = force && stream?.items.size === 1
+    if ((!terminalAfterItem && streamBytes > this.#maxStreamQueuedBytes) || this.#queuedBytes + bytes > this.#maxSocketQueuedBytes) {
+      const limit = streamBytes > this.#maxStreamQueuedBytes ? 'stream' : 'socket'
+      if (force) this.#onFailure(backpressureError('socket'))
+      else this.#onOverflow(streamId, limit)
       return false
     }
-    if (!force && (queue.bytes + bytes > this.#maxStreamQueuedBytes || this.#queuedBytes + bytes > this.#maxSocketQueuedBytes)) {
-      this.#onOverflow(streamId, queue.bytes + bytes > this.#maxStreamQueuedBytes ? 'stream' : 'socket')
-      return false
+    if (stream === undefined) {
+      stream = { bytes: 0, items: new Set() }
+      this.#streams.set(streamId, stream)
     }
-    queue.items.push({ text, bytes })
-    queue.bytes += bytes
+    const item = { onSent }
+    stream.items.add(item)
+    stream.bytes += bytes
     this.#queuedBytes += bytes
-    if (!queue.ready && this.#inFlightStream !== streamId) {
-      queue.ready = true
-      this.#ready.push(streamId)
+    const complete = error => {
+      if (this.#closed || !stream.items.delete(item)) return
+      stream.bytes -= bytes
+      this.#queuedBytes -= bytes
+      if (stream.items.size === 0) this.#streams.delete(streamId)
+      item.onSent?.(error == null)
+      if (error != null) this.#onFailure(error)
     }
-    this.#drain()
+    try { this.#socket.send(text, complete) } catch (error) { complete(error) }
     return true
   }
 
+  send(streamId, value, maxFrameBytes) {
+    let accepted
+    const completion = new Promise(resolve => {
+      accepted = this.enqueue(streamId, value, false, maxFrameBytes, resolve)
+    })
+    return accepted ? completion : false
+  }
+
   drop(streamId) {
-    const queue = this.#queues.get(streamId)
-    if (queue === undefined) return
-    const pendingBytes = queue.items.reduce((total, item) => total + item.bytes, 0)
-    this.#queuedBytes -= pendingBytes
-    queue.bytes -= pendingBytes
-    queue.items.length = 0
-    queue.ready = false
-    this.#ready = this.#ready.filter(candidate => candidate !== streamId)
-    if (this.#inFlightStream !== streamId) this.#queues.delete(streamId)
+    // A canceled send remains charged until its actual socket callback.
+    for (const item of this.#streams.get(streamId)?.items ?? []) item.onSent?.(false)
   }
 
   close() {
     this.#closed = true
-    this.#queues.clear()
-    this.#ready.length = 0
+    for (const stream of this.#streams.values()) for (const item of stream.items) item.onSent?.(false)
+    this.#streams.clear()
     this.#queuedBytes = 0
-  }
-
-  #queue(streamId) {
-    let queue = this.#queues.get(streamId)
-    if (queue === undefined) {
-      queue = { items: [], bytes: 0, ready: false }
-      this.#queues.set(streamId, queue)
-    }
-    return queue
-  }
-
-  #drain() {
-    if (this.#closed || this.#sending || this.#socket.readyState !== 1) return
-    while (this.#ready.length > 0) {
-      const streamId = this.#ready.shift()
-      const queue = this.#queues.get(streamId)
-      if (queue === undefined) continue
-      queue.ready = false
-      const item = queue.items.shift()
-      if (item === undefined) continue
-      this.#sending = true
-      this.#inFlightStream = streamId
-      try {
-        this.#socket.send(item.text, error => {
-          this.#sending = false
-          this.#inFlightStream = undefined
-          // ws 8 reports a successful send as either undefined or null,
-          // depending on the concrete socket path.
-          if (error != null) {
-            this.#onFailure(error)
-            return
-          }
-          const current = this.#queues.get(streamId)
-          if (current !== undefined) {
-            current.bytes -= item.bytes
-            this.#queuedBytes -= item.bytes
-          }
-          if (current?.items.length) {
-            current.ready = true
-            this.#ready.push(streamId)
-          } else if (current !== undefined) this.#queues.delete(streamId)
-          this.#drain()
-        })
-      } catch (error) {
-        this.#sending = false
-        this.#inFlightStream = undefined
-        this.#onFailure(error)
-      }
-      return
-    }
   }
 }
 
@@ -155,24 +151,26 @@ export function serveStreamSocket(socket, hub, options = {}) {
     maxStreamQueuedBytes: positiveLimit(options.maxStreamQueuedBytes, maxFrameBytes * 2),
     maxSocketQueuedBytes: positiveLimit(options.maxSocketQueuedBytes, maxFrameBytes * 4),
   }
+  const sessionFollowFrameBytes = positiveLimit(options.maxFrameBytes, 32 * 1024 * 1024)
   const streams = new Map()
   let open = true
   let streamPrefix
   let lastStreamNumber = 0
 
-  const closeIterator = record => {
+  const closeIterator = (record, reason) => {
     if (record.returned) return
     record.returned = true
-    record.controller.abort(new Error('browser stream closed'))
+    record.controller.abort(reason === undefined ? new Error('browser stream closed') : abortError(reason, record.stage))
     try {
       void Promise.resolve(record.iterator.return?.()).catch(() => {})
     } catch { /* one broken iterator must not block the remaining releases */ }
   }
-  const failSocket = () => {
+  const failSocket = reason => {
     if (!open) return
     open = false
     sender.close()
-    for (const record of streams.values()) closeIterator(record)
+    const failure = reason === undefined ? transportError() : transportError(reason)
+    for (const record of streams.values()) closeIterator(record, failure)
     streams.clear()
     if (socket.readyState === 1) {
       try { socket.close?.(1011, 'stream transport failure') } catch { /* socket is already failing */ }
@@ -182,27 +180,23 @@ export function serveStreamSocket(socket, hub, options = {}) {
     const record = streams.get(streamId)
     if (record === undefined || record.terminal) return
     record.terminal = true
-    if (type === 'error') closeIterator(record)
+    if (type === 'error') closeIterator(record, error)
     sender.enqueue(streamId, type === 'end'
       ? { type: 'end', streamId }
-      : { type: 'error', streamId, error: streamError(error) }, true)
+      : { type: 'error', streamId, error: streamError(error, record.stage) }, true)
     streams.delete(streamId)
   }
   const overflow = (streamId, kind) => {
     if (kind === 'socket') {
-      failSocket()
+      failSocket(backpressureError('socket'))
       return
     }
     const record = streams.get(streamId)
     if (record === undefined || record.terminal) return
     sender.drop(streamId)
-    terminal(streamId, 'error', protocolError(
-      'browser-host-hub-rc1/stream-backpressure',
-      'Browser stream exceeded its bounded send queue',
-      { limit: kind },
-    ))
+    terminal(streamId, 'error', backpressureError(kind))
   }
-  const sender = new FairSocketSender(socket, limits, overflow, failSocket)
+  const sender = new BoundedSocketSender(socket, limits, overflow, failSocket)
 
   const acceptStreamId = streamId => {
     const separator = typeof streamId === 'string' ? streamId.lastIndexOf(':') : -1
@@ -230,7 +224,7 @@ export function serveStreamSocket(socket, hub, options = {}) {
     const { streamId, endpoint, payload } = message
     if (typeof streamId !== 'string' || streamId.length === 0 || typeof endpoint !== 'string' || !STREAM_ENDPOINTS.has(endpoint)) {
       if (typeof streamId === 'string' && streamId.length > 0) {
-        sender.enqueue(streamId, { type: 'error', streamId, error: protocolError('browser-host-hub-rc1/invalid-stream-request', 'Invalid stream open request') }, true)
+        sender.enqueue(streamId, { type: 'error', streamId, error: streamError(protocolError('browser-host-hub-rc1/invalid-stream-request', 'Invalid stream open request'), 'bootstrap') }, true)
       }
       return
     }
@@ -245,21 +239,25 @@ export function serveStreamSocket(socket, hub, options = {}) {
       iterator = stream?.[Symbol.asyncIterator]?.()
       if (iterator === undefined || typeof iterator.next !== 'function') throw new TypeError('hub stream must be async iterable')
     } catch (error) {
-      sender.enqueue(streamId, { type: 'error', streamId, error: streamError(error) }, true)
+      sender.enqueue(streamId, { type: 'error', streamId, error: streamError(error, 'bootstrap') }, true)
       return
     }
-    const record = { controller, iterator, returned: false, terminal: false }
+    const record = { controller, iterator, returned: false, terminal: false, stage: 'bootstrap' }
     streams.set(streamId, record)
     void (async () => {
       try {
         for (;;) {
+          if (!open || record.terminal) return
           const item = await iterator.next()
           if (!open || record.terminal) return
           if (item.done) {
             terminal(streamId, 'end')
             return
           }
-          if (!sender.enqueue(streamId, { type: 'item', streamId, value: item.value })) return
+          const sent = sender.send(streamId, { type: 'item', streamId, value: item.value }, endpoint === 'session/follow' ? sessionFollowFrameBytes : maxFrameBytes)
+          if (sent === false) return
+          record.stage = 'live'
+          if (!(await sent)) return
         }
       } catch (error) {
         if (open && !record.terminal) terminal(streamId, 'error', error)
@@ -308,9 +306,9 @@ export function registerStreamMux(ctx, hub, options = {}) {
   if (typeof ctx?.authorizeRequest !== 'function') throw new TypeError('interface authorization port is required')
   const maxFrameBytes = positiveLimit(options.maxFrameBytes ?? options.maxResponseBytes, DEFAULT_MAX_FRAME_BYTES)
   const streamOptions = {
-    maxFrameBytes,
-    maxStreamQueuedBytes: positiveLimit(options.maxStreamQueuedBytes, maxFrameBytes * 2),
-    maxSocketQueuedBytes: positiveLimit(options.maxSocketQueuedBytes, maxFrameBytes * 4),
+    maxFrameBytes: options.maxFrameBytes ?? options.maxResponseBytes,
+    maxStreamQueuedBytes: options.maxStreamQueuedBytes,
+    maxSocketQueuedBytes: options.maxSocketQueuedBytes,
   }
   const webSocketServer = options.webSocketServer ?? new WebSocketServer({
     noServer: true,
@@ -343,4 +341,3 @@ export function registerStreamMux(ctx, hub, options = {}) {
     try { webSocketServer.close() } catch { /* injected test servers may already be closed */ }
   }
 }
-import { decodeBrowserStreamFrame } from 'dsh-runtime-interface/browser'

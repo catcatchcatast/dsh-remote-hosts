@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { normalizeRuntimeVersion } from 'dsh-runtime-interface'
 import { validateTarget } from 'dsh-rc1-host-carriers'
 
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                     
 
 export function resolveDshHome(env = process.env) {
   const configured = typeof env?.DSH_HOME === 'string' ? env.DSH_HOME.trim() : ''

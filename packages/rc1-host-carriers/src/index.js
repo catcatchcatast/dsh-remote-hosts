@@ -1,7 +1,18 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                               
+                                                                                                                                                     
+                                                                                                                                                         
+// 只在连接参数变化时重建Host并释放旧生命周期链接。
+                                                                                                                                                   
+                                                                                                                                                   
+                                                                                                                                         
+                                                                                                                                                                       
+                                                                                                                                     
+                                                                                   
+import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { createConnection } from 'node:net'
-import { normalizeRuntimeVersion } from 'dsh-runtime-interface'
+import { normalizeRuntimeVersion, createInteractionPeerClient } from 'dsh-runtime-interface'
 import { lazyCarrier } from './lazy-carrier.js'
 
 export const name = 'rc1-host-carriers'
@@ -25,7 +36,8 @@ function sshArgs(target) {
 /** Never expose helper stdout/stderr to diagnostic exceptions. */
 export const SYSTEMD_RESTART_COMMAND = 'systemctl --user restart dsh-web.service'
 
-function upstreamVersion(target) {
+// 仅保旧配置比较/校验；传输实际版本必须来自该次已鉴权连接。
+function configuredVersion(target) {
   return target?.upstreamVersion === undefined
     ? REMOTE_UPSTREAM_VERSION
     : normalizeRuntimeVersion(target.upstreamVersion)
@@ -86,21 +98,38 @@ async function socketReady(port) {
   })
 }
 
-export async function connectSshCarrier(target, lifetime, createCarrier, WebSocket) {
+export async function connectSshCarrier(target, lifetime, createCarrier, WebSocket, { diagnostics } = {}) {
   validateTarget(target)
   lifetime.throwIfAborted()
+  const entryId = randomUUID()
+  const trace = (operation, metadata) => {
+    try { diagnostics?.record({ phase: operation === 'ssh-error' ? 'carrier_error' : 'carrier_close', endpoint: 'host/describe', hostId: target.id, entryId, operation, ...metadata }) } catch { /* preserve lifecycle on diagnostic failure */ }
+  }
   const controller = new AbortController()
   const signal = AbortSignal.any([lifetime, controller.signal])
-  const child = spawn('ssh', [...sshArgs(target), '-N', '-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', '-L', `127.0.0.1:${target.localPort}:127.0.0.1:${target.remotePort}`, target.alias], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
+  const child = spawn('ssh', [...sshArgs(target), '-N', '-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', '-L', `127.0.0.1:${target.localPort}:127.0.0.1:${target.remotePort}`, '-C', target.alias], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
   child.stderr.resume()
-  let ended = false
+  let ended = false, killIntent = false
   const closed = new Promise(resolve => {
-    const end = () => { ended = true; controller.abort(); resolve() }
-    child.once('error', end); child.once('close', end)
+    const end = (exitCode, exitSignal) => {
+      ended = true
+      trace('ssh-exit', { sshPid: child.pid, exitCode, exitSignal, killIntent, closeSource: 'child-exit' })
+      controller.abort(); resolve()
+    }
+    child.once('error', error => {
+      trace('ssh-error', { sshPid: child.pid, errorCode: error?.code, killIntent, closeSource: 'child-error' })
+    })
+    child.once('close', end)
   })
-  const close = () => { controller.abort(); if (!ended) child.kill() }
-  lifetime.addEventListener('abort', close, { once: true })
-  closed.then(() => lifetime.removeEventListener('abort', close))
+  const close = (closeSource = 'caller-close') => {
+    if (ended || killIntent) return
+    killIntent = true
+    trace('ssh-close', { sshPid: child.pid, killIntent, closeSource })
+    controller.abort(); child.kill()
+  }
+  const abort = () => close('host-lifetime')
+  lifetime.addEventListener('abort', abort, { once: true })
+  closed.then(() => lifetime.removeEventListener('abort', abort))
   let stage = 'FORWARD'
   try {
     const deadline = Date.now() + 15000
@@ -127,10 +156,11 @@ export async function connectSshCarrier(target, lifetime, createCarrier, WebSock
     const origin = `http://127.0.0.1:${target.localPort}`
     const entry = new URL('/', origin); entry.search = source.search
     stage = 'AUTHENTICATION'
-    const carrier = await createCarrier(origin, entry.href, WebSocket, signal)
-    return { carrier, closed, close }
+    const carrier = await createCarrier(origin, entry.href, WebSocket, signal, { diagnostics, hostId: target.id, entryId })
+    signal.throwIfAborted()
+    return { carrier, closed, close, entryId, signal }
   } catch {
-    close()
+    close('connect-failed')
     if (lifetime.aborted) lifetime.throwIfAborted()
     throw new Error(`HOST_CONNECTION_FAILED_${stage}`)
   }
@@ -142,6 +172,13 @@ export function createRemoteHostControl({ seedTargets, createCarrier, WebSocket,
   const lastError = new Map()
   const helperOk = new Map()
   let live = seed.map(target => ({ ...target, enabled: target.enabled !== false }))
+
+  function sameConnection(before, after) {
+    return before !== undefined
+      && ['alias', 'configFile', 'localPort', 'remotePort'].every(key => before[key] === after[key])
+      && (before.launch ?? 'none') === (after.launch ?? 'none')
+      && configuredVersion(before) === configuredVersion(after)
+  }
 
   function stop(id) {
     hostLife.get(id)?.abort()
@@ -159,29 +196,34 @@ export function createRemoteHostControl({ seedTargets, createCarrier, WebSocket,
     const life = new AbortController()
     const linked = () => life.abort()
     if (lifetime.aborted) life.abort(lifetime.reason)
-    else lifetime.addEventListener('abort', linked, { once: true })
+    else lifetime.addEventListener('abort', linked, { once: true, signal: life.signal })
     hostLife.set(target.id, life)
-    const version = upstreamVersion(target)
+    configuredVersion(target)
     const lazy = lazyCarrier(async signal => {
+      let entry
       try {
-        const entry = await connectSshCarrier(target, signal, createCarrier, WebSocket)
-        lastError.delete(target.id)
+        entry = await connectSshCarrier(target, signal, createCarrier, WebSocket, { diagnostics: runtimeInterface.diagnostics })
         helperOk.set(target.id, true)
-        return entry
+        const version = await runtimeInterface.readHostRuntimeVersion(entry.carrier, signal)
+        signal.throwIfAborted()
+        const carrier = runtimeInterface.wrapHostCarrier({ hostId: target.id, carrier: entry.carrier,
+          upstreamVersion: version ?? configuredVersion(target), versionConfirmed: version !== undefined,
+          versionSignal: entry.signal,
+          identity: { hostId: target.id } })
+        lastError.delete(target.id)
+        return { ...entry, carrier }
       } catch (error) {
+        entry?.close('runtime-version-unavailable')
         lastError.set(target.id, error?.message)
         if (String(error?.message ?? '').includes('BOOTSTRAP_READ')) helperOk.set(target.id, false)
         throw error
       }
-    }, life.signal)
-    const carrier = exposeCarrier({
-      hostId: target.id,
-      carrier: lazy,
-      label: target.label,
-      version,
-      raw: lazy.raw.bind(lazy),
-      runtimeInterface,
-    })
+    }, life.signal, { diagnostics: runtimeInterface.diagnostics, hostId: target.id })
+    const carrier = { ...lazy, hostId: target.id, label: target.label,
+      runtimeInterfaceCarrier: true,
+      get upstreamVersion() { return lazy.upstreamVersion },
+      interactions: createInteractionPeerClient(lazy),
+    }
     perHost.set(target.id, carrier)
   }
 
@@ -204,6 +246,7 @@ export function createRemoteHostControl({ seedTargets, createCarrier, WebSocket,
       }
     },
     async hydrate(list) {
+      const previous = new Map(live.map(target => [target.id, target]))
       live = list.map(target => ({ ...validateTarget(target), enabled: target.enabled !== false }))
       const keep = new Set(live.filter(target => target.enabled !== false).map(target => target.id))
       for (const id of [...perHost.keys()]) {
@@ -211,7 +254,10 @@ export function createRemoteHostControl({ seedTargets, createCarrier, WebSocket,
       }
       for (const target of live) {
         if (target.enabled === false) stop(target.id)
-        else attach(target)
+        else if (previous.get(target.id)?.enabled !== false && sameConnection(previous.get(target.id), target)) {
+          const existing = perHost.get(target.id)
+          if (existing) existing.label = target.label
+        } else attach(target)
       }
     },
     async disconnect(id) {
@@ -268,10 +314,10 @@ export async function apply(ctx, config = {}) {
   const lifetime = new AbortController()
   const perHost = new Map()
   const origin = `http://127.0.0.1:${ctx.webServer.port}`
-  const localLazy = lazyCarrier(async signal => ({
-    carrier: await createCarrier(origin, runtimeInterface.connection.authenticatedUrl(origin + '/'), WebSocket, signal),
-    close() {},
-  }), lifetime.signal)
+  const localLazy = lazyCarrier(async signal => {
+    const entryId = randomUUID()
+    return { entryId, carrier: await createCarrier(origin, runtimeInterface.connection.authenticatedUrl(origin + '/'), WebSocket, signal, { diagnostics: runtimeInterface.diagnostics, hostId: 'local', entryId }), close() {} }
+  }, lifetime.signal, { diagnostics: runtimeInterface.diagnostics, hostId: 'local' })
   const localCarrier = exposeCarrier({
     hostId: 'local',
     carrier: localLazy,

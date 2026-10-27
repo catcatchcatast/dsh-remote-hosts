@@ -1,3 +1,9 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                     
+                                                                                                                                                           
+                                                                                                                                               
+                                                                                                                                             
+                                                                                                                                             
+                                                                                                                                     
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
@@ -15,7 +21,7 @@ export const RULES = Object.freeze({
   legacySurfaceOpRange: 'legacy-surface-op-range',
 })
 
-const SERVICE_NAMES = new Set(['sessionController', 'workspaceController', 'connection', 'subagents'])
+const SERVICE_NAMES = new Set(['typertGateway', 'jobController', 'sessionController', 'workspaceController', 'connection', 'subagents'])
 const MIGRATION_PACKAGES = new Set([
   'mobile-controller-compat-rc1',
   'mobile-session-sync-rc1',
@@ -24,7 +30,7 @@ const MIGRATION_PACKAGES = new Set([
 ])
 const CODE_EXTENSIONS = new Set(['.cjs', '.js', '.jsx', '.mjs', '.ts', '.tsx'])
 const PRIVATE_RUNTIME_SPECIFIER = /^(?:@deepseek-ai\/dsh-api-[^/]+(?:\/|$)|@deepseek-ai\/dsh-client-connection(?:\/|$)|@deepseek-ai\/dsh-core(?:\/|$)|(?:\.\.\/)+dsh-core(?:\/|$))/u
-const TRACE_COMMENT = ''
+const TRACE_COMMENT = 'public-release/interface-boundary'
 
 function slash(value) { return value.split(path.sep).join('/') }
 function relativeFile(root, file) { return slash(path.relative(root, file)) }
@@ -145,9 +151,31 @@ function addImportViolations(out, sourceFile, node) {
   if (specifier !== undefined && privateRuntimeSpecifier(specifier)) addViolation(out, sourceFile, node.arguments[0], RULES.privateRuntimeImport, { specifier })
 }
 
-function addRawViolation(out, sourceFile, node) {
-  if (ts.isPropertyAccessExpression(node) && node.name.text === 'raw') addViolation(out, sourceFile, node, RULES.carrierRaw)
-  else if (ts.isElementAccessExpression(node) && isStringElement(node.argumentExpression, 'raw')) addViolation(out, sourceFile, node, RULES.carrierRaw)
+// A conservative whole-file proof avoids treating the standard template tag as
+// a carrier. Any local String declaration or write keeps the raw rule active.
+function standardStringIsUnmodified(sourceFile) {
+  let safe = true
+  const targetsString = node => isIdentifier(node, 'String')
+    || ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) && isIdentifier(node.expression, 'String'))
+  const visit = node => {
+    if (isIdentifier(node, 'String') && ts.isDeclarationName(node)) safe = false
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment
+      && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment && targetsString(node.left)) safe = false
+    if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node) || ts.isDeleteExpression(node))
+      && targetsString(node.operand ?? node.expression)) safe = false
+    // Dynamic scope can replace an otherwise unbound global String.
+    if (ts.isWithStatement(node) || (ts.isCallExpression(node) && isIdentifier(node.expression, 'eval'))) safe = false
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return safe
+}
+
+function addRawViolation(out, sourceFile, node, standardString) {
+  if (ts.isPropertyAccessExpression(node) && node.name.text === 'raw') {
+    if (standardString && isIdentifier(node.expression, 'String') && ts.isTaggedTemplateExpression(node.parent) && node.parent.tag === node) return
+    addViolation(out, sourceFile, node, RULES.carrierRaw)
+  } else if (ts.isElementAccessExpression(node) && isStringElement(node.argumentExpression, 'raw')) addViolation(out, sourceFile, node, RULES.carrierRaw)
 }
 
 function addLegacyFieldViolation(out, sourceFile, node) {
@@ -183,11 +211,12 @@ function scanFile(root, packageDirectory, file, violations) {
   const scriptKind = file.endsWith('.tsx') ? ts.ScriptKind.TSX : file.endsWith('.jsx') ? ts.ScriptKind.JSX : file.endsWith('.ts') ? ts.ScriptKind.TS : ts.ScriptKind.JS
   const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, scriptKind)
   const local = []
+  const standardString = standardStringIsUnmodified(sourceFile)
   const visit = node => {
     addContextAccess(local, sourceFile, node)
     addInjectEntries(local, sourceFile, node)
     addImportViolations(local, sourceFile, node)
-    addRawViolation(local, sourceFile, node)
+    addRawViolation(local, sourceFile, node, standardString)
     addLegacyFieldViolation(local, sourceFile, node)
     addSurfaceViolation(local, sourceFile, node)
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
@@ -197,8 +226,12 @@ function scanFile(root, packageDirectory, file, violations) {
   }
   visit(sourceFile)
   const workspaceRelative = relativeFile(root, file)
+                                                                                                                                                           
+  // Generated internal modules inherit only their exact source-call exception/hash.
+  // New expressions still fail; no package/directory-wide exemption is introduced.
+  const exceptionFile = workspaceRelative.replace(/^packages\/remote-hosts\/lib\/modules\/([^/]+)\//, 'packages/$1/src/')
   for (const violation of local) {
-    violation.file = workspaceRelative
+    violation.file = exceptionFile
     violation.package = packageDirectory
     violation.trace = TRACE_COMMENT
     violations.push(violation)
@@ -254,7 +287,13 @@ function validateExceptions(root, entries, violations) {
 }
 
 export function scanInterfaceBoundary({ root = workspaceRoot, profile = releaseProfile, exceptionsPath = path.join(root, 'docs', 'interface-exceptions.json') } = {}) {
+  const exceptionData = readExceptions(exceptionsPath)
   const packageDirectories = releasePackageDirectories(root, profile)
+  // 保留例外所属模块的检查，不能因默认构建裁为两根而漏扫或删除有效例外。
+  for (const entry of exceptionData.entries) {
+    const directory = typeof entry?.file === 'string' ? /^packages\/([a-z0-9-]+)\//u.exec(entry.file)?.[1] : undefined
+    if (directory && !packageDirectories.includes(directory) && fs.existsSync(path.join(root, 'packages', directory, 'package.json'))) packageDirectories.push(directory)
+  }
   const violations = []
   const files = []
   for (const directory of packageDirectories) {
@@ -265,7 +304,6 @@ export function scanInterfaceBoundary({ root = workspaceRoot, profile = releaseP
     if (directory === 'runtime-interface') continue
     for (const file of packageFiles) scanFile(root, directory, file, violations)
   }
-  const exceptionData = readExceptions(exceptionsPath)
   const exceptionState = validateExceptions(root, exceptionData.entries, violations)
   const unsuppressed = violations.filter(item => !exceptionState.suppressed.has(exceptionKey(item)))
   const errors = [...exceptionState.errors, ...exceptionState.stale]

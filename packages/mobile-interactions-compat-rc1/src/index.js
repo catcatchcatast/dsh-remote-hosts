@@ -1,3 +1,7 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                             
+import { HostInteractionState } from './host-interaction-state.js'
+                                                                                                                                         
+                                                                                                                                     
 import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import { createCarrier } from './carrier.js'
@@ -76,6 +80,20 @@ export function apply(ctx) {
   return ctx.effect(() => {
     const bridge = new InteractionBridge()
     const lifetime = new AbortController()
+    const source = runtimeInterface.hostInteractions
+    const owner = source && new HostInteractionState({ runtimeEpoch: source.runtimeEpoch })
+    const unregisterPeer = owner ? runtimeInterface.registerHostInteractions(owner) : () => {}
+    const runOwner = async () => {
+      while (!lifetime.signal.aborted) {
+        try {
+          for await (const event of source.open(lifetime.signal)) owner.accept(event)
+        } catch {
+          if (!lifetime.signal.aborted) console.warn('DSH_HOST_INTERACTIONS_UNAVAILABLE')
+        } finally { owner.disconnected() }
+        if (!lifetime.signal.aborted) await delay(1000, undefined, { signal: lifetime.signal })
+      }
+    }
+    if (owner) runOwner().catch(() => owner.disconnected())
     ctx.provide('mobileInteractions', bridge)
     const unregister = webServer.register({ kind: 'exact', path: '/api/respond', handler: async (req, res) => {
       const rejection = connection.requestRejection(req)
@@ -115,6 +133,6 @@ export function apply(ctx) {
       }
     }
     run().catch(() => bridge.disconnect())
-    return () => { lifetime.abort(); bridge.disconnect(); unregister() }
+    return () => { lifetime.abort(); bridge.disconnect(); unregisterPeer(); unregister() }
   }, 'mobile-interactions-compat-rc1: authoritative pending interactions')
 }

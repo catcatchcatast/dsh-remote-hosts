@@ -2,26 +2,34 @@
   "name": "dsh-remote-hosts-workspace",
   "version": "0.2.0",
   "private": true,
-  "description": "DeepSeek Harness remote hosts plugins for DSH 0.1.5-rc.2 and 0.1.2-rc.1",
+  "description": "DSH 0.2.1-rc.2 public plugin sources and prebuilt packages",
   "packageManager": "pnpm@11.19.0",
   "type": "module",
   "scripts": {
     "build": "node tools/release-profile.mjs build",
-    "test": "node tools/release-profile.mjs test",
-    "test:legacy": "node --test tests/*.test.mjs",
+    "test": "node --test tests/public-package.test.mjs",
     "check:interface": "node tools/check-interface-boundary.mjs",
-    "check": "pnpm run check:interface && pnpm run test && pnpm run build"
+    "check": "pnpm run check:interface && pnpm run test && pnpm run build",
+    "build:remote": "node tools/release-profile.mjs build",
+    "test:contracts": "node --test tests/runtime-interface-fork-inbox.test.mjs"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "4.0.2",
-    "@deepseek-ai/dsh-atomic-write": "0.1.5-rc.2",
-    "@deepseek-ai/dsh-home-paths": "0.1.5-rc.2",
-    "@deepseek-ai/dsh-llm": "0.1.2-rc.1",
-    "@deepseek-ai/dsh-web": "0.1.2-rc.1",
-    "@deepseek-ai/schemastery": "3.18.2",
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/dsh-atomic-write": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-home-paths": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-web": "0.2.1-rc.2",
+    "@deepseek-ai/schemastery": "3.18.5",
+    "dsh-runtime-interface": "workspace:*",
     "tsdown": "0.22.2",
     "typescript": "^6.0.3",
-    "dsh-runtime-interface": "workspace:*"
+    "jsdom": "29.1.1",
+    "vitest": "4.1.11",
+    "vite-tsconfig-paths": "6.1.1",
+    "@testing-library/react": "16.3.3",
+    "@testing-library/dom": "10.4.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
   },
   "license": "Apache-2.0"
 }

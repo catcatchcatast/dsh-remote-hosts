@@ -1,3 +1,7 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                             
+                                                                                                                                                           
+                                                                                                                                                 
+                                                                                                                                       
 
 import { appendFile, link, mkdir, open, readFile, unlink, writeFile } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
@@ -573,16 +577,15 @@ function portState(port, host = '127.0.0.1') {
   })
 }
 
-async function waitForPortReady(port, { inspectPort = portState, timeoutMs = 10000 } = {}) {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
+async function waitForPortReady(port, { inspectPort = portState, checkActive = () => {} } = {}) {
+  while (true) {
+    checkActive()
     const probe = await inspectPort(port)
+    checkActive()
     const state = stateOf(probe)
     if (state === 'occupied' || state === 'expected') return probe
-    if (state === 'unknown') throw new ManagedRuntimeError('LOCAL_RESTART_PORT_UNKNOWN', 'managed runtime port state is unknown', { stage: 'ready-port' })
     await new Promise(resolveWait => setTimeout(resolveWait, 50))
   }
-  throw new ManagedRuntimeError('LOCAL_RESTART_LAUNCH_FAILED', 'managed runtime did not become ready')
 }
 
 function spawnResult(child) {
@@ -590,11 +593,12 @@ function spawnResult(child) {
   if (typeof child.once !== 'function') return Promise.resolve(child)
   return new Promise((resolveSpawn, rejectSpawn) => {
     let settled = false
-    const resolveOnce = value => { if (!settled) { settled = true; resolveSpawn(value) } }
-    const rejectOnce = error => { if (!settled) { settled = true; rejectSpawn(error) } }
-    child.once('error', error => rejectOnce(new ManagedRuntimeError('LOCAL_RESTART_LAUNCH_FAILED', 'managed runtime spawn failed', { cause: String(error?.message ?? error) })))
-    child.once('spawn', () => resolveOnce(child))
-    if (child.pid !== undefined && child.spawned === true) resolveOnce(child)
+    const cleanup = () => { child.off?.('error', failed); child.off?.('spawn', ready) }
+    const ready = () => { if (!settled) { settled = true; cleanup(); resolveSpawn(child) } }
+    const failed = error => { if (!settled) { settled = true; cleanup(); rejectSpawn(new ManagedRuntimeError('LOCAL_RESTART_LAUNCH_FAILED', 'managed runtime spawn failed', { cause: String(error?.message ?? error) })) } }
+    child.once('error', failed)
+    child.once('spawn', ready)
+    if (child.pid !== undefined && child.spawned === true) ready()
   })
 }
 
@@ -613,13 +617,16 @@ export async function launchManagedRuntime(descriptorValue, {
   writeInstance = writeInstanceRecord,
   log = logLaunch,
   env = globalThis.process?.env ?? {},
-  waitTimeoutMs,
+  isCancelled = () => false,
   platform = globalThis.process?.platform ?? process.platform,
   supervise = false,
 } = {}) {
   const descriptor = normalizeManagedRuntimeDescriptor(descriptorValue)
+  const checkCancelled = () => { if (isCancelled()) throw new ManagedRuntimeError('LOCAL_RESTART_BROKER_CANCELLED', 'managed runtime broker was cancelled') }
+  checkCancelled()
   const release = await acquire(descriptor.mutexPath, { isPidAlive, getProcessBirthStamp })
   try {
+    checkCancelled()
     const fingerprint = descriptorFingerprint(descriptor)
     const instance = await readInstance(descriptor.instancePath)
     if (instance !== undefined) {
@@ -652,6 +659,7 @@ export async function launchManagedRuntime(descriptorValue, {
           const ownerPid = ownerPidOf(existingPort)
           const ownerBirthStamp = ownerPid === instance.pid ? await getProcessBirthStamp(ownerPid) : undefined
           if ((existingState === 'occupied' || existingState === 'expected') && ownerPid === instance.pid && ownerBirthStamp === instance.birthStamp) {
+            checkCancelled()
             return Object.freeze({ attached: true, launched: false, pid: instance.pid, profileId: descriptor.profileId })
           }
           if (existingState === 'occupied' || existingState === 'expected') {
@@ -672,7 +680,19 @@ export async function launchManagedRuntime(descriptorValue, {
       throw new ManagedRuntimeError('LOCAL_RESTART_PORT_OCCUPIED', 'managed runtime port is occupied by an unknown process', { stage: 'preflight-owner' })
     }
     if (beforeState !== 'free') throw new ManagedRuntimeError('LOCAL_RESTART_PORT_UNKNOWN', 'managed runtime port state is unknown', { stage: 'preflight-port' })
+    checkCancelled()
     let spawned
+    let childExited = false
+    let childError
+    let resolveChildExit
+    const childExit = new Promise(resolve => { resolveChildExit = resolve })
+    const onChildExit = () => { childExited = true; resolveChildExit() }
+    const onChildError = error => { childError = error }
+    const stopped = () => childExited || spawned?.exitCode != null || spawned?.signalCode != null
+    const checkOwned = () => {
+      checkCancelled()
+      if (stopped() || childError) throw new ManagedRuntimeError('LOCAL_RESTART_LAUNCH_FAILED', 'managed runtime ended before readiness', { stage: childError ? 'ready-child-error' : 'ready-child-exit', spawnedPid: spawned?.pid })
+    }
     let stdio
     let stdioClosed = false
     try {
@@ -685,30 +705,37 @@ export async function launchManagedRuntime(descriptorValue, {
           detached: platform !== 'win32',
           stdio: stdio.stdio,
         })
+        spawned?.once?.('exit', onChildExit)
+        spawned?.on?.('error', onChildError)
       } catch (error) {
         throw new ManagedRuntimeError('LOCAL_RESTART_LAUNCH_FAILED', 'managed runtime spawn failed', { cause: String(error?.message ?? error) })
       }
       // Keep the log handle open until Node reports that the child has
       // spawned. Closing it immediately can suppress the spawn event on
       // Windows while leaving an untracked child and mutex behind.
+      checkOwned()
       const child = await spawnResult(spawned)
+      checkOwned()
       await stdio?.close()
       stdioClosed = true
       const pid = child?.pid
       if (!Number.isSafeInteger(pid) || pid < 1) throw new ManagedRuntimeError('LOCAL_RESTART_LAUNCH_FAILED', 'managed runtime spawn returned no valid pid')
       const spawnedBirthStamp = await getProcessBirthStamp(pid)
+      checkOwned()
       if (!validProcessStamp(spawnedBirthStamp)) {
         throw new ManagedRuntimeError('LOCAL_RESTART_LAUNCH_FAILED', 'managed runtime process identity could not be verified', { stage: 'spawned-identity', spawnedPid: pid })
       }
       await writeInstance(descriptor.instancePath, { pid, birthStamp: spawnedBirthStamp, fingerprint, profileId: descriptor.profileId, port: descriptor.port })
+      checkOwned()
       if (platform !== 'win32' || !supervise) child.unref?.()
       const readyProbe = await waitForPortReady(descriptor.port, {
         inspectPort,
-        timeoutMs: waitTimeoutMs ?? descriptor.readyTimeoutMs,
+        checkActive: checkOwned,
       })
       const readyState = stateOf(readyProbe)
       const ownerPid = ownerPidOf(readyProbe)
       const ownerBirthStamp = ownerPid === pid ? await getProcessBirthStamp(ownerPid) : undefined
+      checkOwned()
       if (ownerPid !== pid || ownerBirthStamp !== spawnedBirthStamp) {
         throw new ManagedRuntimeError('LOCAL_RESTART_PORT_OCCUPIED', 'managed runtime port owner did not match the spawned process identity', {
           stage: 'ready-owner', ownerPid, spawnedPid: pid, spawnedBirthStamp,
@@ -716,8 +743,22 @@ export async function launchManagedRuntime(descriptorValue, {
         })
       }
       await log(descriptor, 'launched', { pid, readyState }).catch(() => {})
+      checkOwned()
       return Object.freeze({ attached: readyState === 'expected', launched: readyState !== 'expected', pid, profileId: descriptor.profileId })
+    } catch (error) {
+      // Cancellation owns only the captured newly spawned handle, never an attach/PID lookup.
+      if (error?.code === 'LOCAL_RESTART_BROKER_CANCELLED' && typeof spawned?.kill === 'function' && !stopped()) {
+        try {
+          if ((platform === 'win32' ? spawned.kill() : spawned.kill('SIGKILL')) === false && !stopped()) throw new Error('owned child cancellation was not confirmed')
+          if (!stopped()) await childExit
+        } catch {
+          throw new ManagedRuntimeError('LOCAL_RESTART_BROKER_CANCELLED', 'owned child cancellation could not be confirmed', { stage: 'cancel-child', spawnedPid: spawned.pid })
+        }
+      }
+      throw error
     } finally {
+      spawned?.off?.('exit', onChildExit)
+      spawned?.off?.('error', onChildError)
       if (!stdioClosed) await stdio?.close()
     }
   } catch (error) {
@@ -781,7 +822,6 @@ export function forkManagedRuntimeBroker(descriptorValue, {
     if (child?.connected === false) return
     try { child?.disconnect?.() } catch { /* the parent may already be closing */ }
   }
-  let launchTimer
   let launchSettled = false
   let resolveLaunch
   let rejectLaunch
@@ -794,7 +834,6 @@ export function forkManagedRuntimeBroker(descriptorValue, {
   const failLaunch = error => {
     if (mode !== 'start' || launchSettled) return
     launchSettled = true
-    clearTimeout(launchTimer)
     rejectLaunch(error)
     cancel()
   }
@@ -851,12 +890,8 @@ export function forkManagedRuntimeBroker(descriptorValue, {
         // prevent the official natural appExit shutdown from converging.
         if (mode === 'restart') {
           try { child.channel?.unref?.() } catch { /* preserve the handshake */ }
-        } else {
-          // Port readiness plus bounded process-identity queries. Keep IPC
-          // referenced until the cold-start CLI has a ready/error result.
-          launchTimer = setTimeout(() => failLaunch(new ManagedRuntimeError('LOCAL_RESTART_READY_TIMEOUT', 'managed runtime broker did not confirm launch')),
-            descriptor.readyTimeoutMs + 3 * PROCESS_STAMP_QUERY_TIMEOUT_MS)
         }
+        // Start IPC stays referenced until actual launch/error, not a readiness guess.
         resolveOnce(readyMessage)
       } else if (message.type === 'launched' && mode === 'start') {
         if (!commitAcknowledged || message.fingerprint !== descriptorFingerprint(descriptor)
@@ -869,7 +904,6 @@ export function forkManagedRuntimeBroker(descriptorValue, {
         }
         if (launchSettled) return
         launchSettled = true
-        clearTimeout(launchTimer)
         resolveLaunch(message.result)
         try { child.channel?.unref?.() } catch { /* result already delivered */ }
       }
@@ -880,6 +914,7 @@ export function forkManagedRuntimeBroker(descriptorValue, {
       }
     })
   })
+  if (mode === 'start') child.channel?.ref?.()
   child.unref?.()
   Promise.resolve().then(async () => {
     const stamp = configuredParentBirthStamp ?? await configuredGetProcessBirthStamp(parentPid)
@@ -961,7 +996,7 @@ export async function runManagedRuntimeBroker({
   await waitForCommit()
   if (mode === 'restart') await wait(parentPid, { isAlive, getProcessBirthStamp, birthStamp: parentBirthStamp, isCancelled, timeoutMs: normalized.exitWaitMs })
   if (isCancelled()) throw new ManagedRuntimeError('LOCAL_RESTART_BROKER_CANCELLED', 'managed runtime broker was cancelled')
-  const result = await launch(normalized, { supervise: true })
+  const result = await launch(normalized, { supervise: true, isCancelled })
   if (isCancelled()) throw new ManagedRuntimeError('LOCAL_RESTART_BROKER_CANCELLED', 'managed runtime broker was cancelled')
   const delivered = await sendMessage(send, { type: 'launched', fingerprint: descriptorFingerprint(normalized), result })
   if (mode === 'start' && !delivered) throw new ManagedRuntimeError('LOCAL_RESTART_BROKER_FAILED', 'managed runtime launch confirmation could not be delivered')
@@ -1015,13 +1050,14 @@ if (globalThis.process?.send && globalThis.process?.on && globalThis.process.arg
   let commitReceived = false
   let mode = 'restart'
   let launchConfirmed = false
+  let launchConfirmationPending = false
   let resolveCommit
   const commit = new Promise(resolve => { resolveCommit = resolve })
   // The parent runtime is expected to exit after it receives the committed
   // handshake. A disconnect before that explicit commit still cancels the
   // broker, so a ready message that was not received cannot trigger a launch.
   globalThis.process.once('disconnect', () => {
-    if (!commitReceived || (mode === 'start' && !launchConfirmed)) {
+    if (!commitReceived || (mode === 'start' && !launchConfirmed && !launchConfirmationPending)) {
       cancelRequested = true
       resolveCommit?.()
     }
@@ -1060,7 +1096,9 @@ if (globalThis.process?.send && globalThis.process?.on && globalThis.process.arg
           readyMessage = value
           commitRequested = true
         }
+        if (value?.type === 'launched') launchConfirmationPending = true
         return sendProcessMessage(value).then(delivered => {
+          if (value?.type === 'launched') launchConfirmationPending = false
           if (value?.type === 'launched' && delivered) launchConfirmed = true
           return delivered
         })

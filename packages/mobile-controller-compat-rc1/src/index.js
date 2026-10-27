@@ -1,8 +1,14 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                 
+                                                                                                                                               
 /**
  * Narrow Android business-RPC compatibility bridge for the official rc1
  * Session/Workspace controller faces. It intentionally owns no event stream
  * or token bootstrap state.
  *
+ *                                                                                                                                                                     
+ *                                                                                                                                   
+ *                                                                                                                                                 
+ *                                                                                                                                                       
  */
 
 import { homedir } from 'node:os'
@@ -10,18 +16,15 @@ import { canonicalToMobileHistoryEvent } from 'dsh-runtime-interface'
 import { dispatchSubagent, MOBILE_SUBAGENT_COMPAT_METHODS } from './subagents.js'
 import { dispatchAuxiliary, MOBILE_AUXILIARY_COMPAT_METHODS } from './auxiliary.js'
 
-// The official commands/execute route already owns its public wire shape.
-const auxiliaryMethods = MOBILE_AUXILIARY_COMPAT_METHODS.filter(method => method.startsWith('goal.'))
+// Command and goal operations share the runtime-interface Agent boundary. The
+// route accepts Android's legacy envelope while the interface maps the
+// operation to each supported official runtime version.
+const auxiliaryMethods = MOBILE_AUXILIARY_COMPAT_METHODS
 
 export const name = 'mobile-controller-compat-rc1'
 export const inject = [
   'webServer',
   'runtimeInterface',
-  'agents',
-  'agentDefaultModel',
-  'agentPresets',
-  'directoryPickerController',
-  'goals',
 ]
 
 export const MOBILE_CONTROLLER_COMPAT_METHODS = Object.freeze([
@@ -62,7 +65,6 @@ export const MOBILE_CONTROLLER_COMPAT_UNSUPPORTED_METHODS = Object.freeze([
   'events.host',
   'tokenbootstrap',
   'session.openWorkspacePath',
-  'commands/execute',
   'skills.list',
   'fileReferences.list',
 ])
@@ -74,7 +76,6 @@ export const RC1_RUNTIME_VERSION = '0.1.2-rc.1'
 
 const DEFAULT_CONFIG = Object.freeze({
   maxRequestBytes: DEFAULT_MAX_REQUEST_BYTES,
-  maxResponseBytes: DEFAULT_MAX_RESPONSE_BYTES,
   requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
 })
 
@@ -297,23 +298,13 @@ export async function readSessionModels(ctx, payload, signal) {
   }
 }
 
-/** Adapt AgentPresets' path-free roster to Android's old catalog shape. */
+/** Read the stable mobile preset catalog supplied by the interface. */
 export async function readAgentPresetCatalog(ctx) {
-  const presets = ctx?.agentPresets
-  if (!presets || typeof presets.remoteExportList !== 'function') {
+  const presets = runtimeOf(ctx).mobileHost
+  if (!presets || typeof presets.presets !== 'function') {
     throw new CapabilityUnavailableError('agent preset roster is unavailable')
   }
-  const roster = unwrapControllerValue(await presets.remoteExportList())
-  if (!roster || typeof roster !== 'object' || !Array.isArray(roster.presets)) {
-    throw new CapabilityUnavailableError('agent preset roster is unavailable')
-  }
-  return {
-    presets: roster.presets,
-    authorable: typeof roster.authorable === 'boolean' ? roster.authorable : false,
-    // rc1 has no document-authoring field. False is an explicit unsupported
-    // capability, never a claim that a document service is present.
-    hasDocument: typeof roster.hasDocument === 'boolean' ? roster.hasDocument : false,
-  }
+  return presets.presets()
 }
 
 /** Select an AgentPreset through the official Session Agent and preset service. */
@@ -372,9 +363,9 @@ async function dispatch(ctx, method, payload, signal, rpcId, config) {
       return describeHost(ctx, config, signal)
     case 'host.listDirectory':
       expectObject(payload)
-      return ctx.directoryPickerController.list(optionalString(payload.path, 'path'), signal)
+      return runtimeOf(ctx).mobileHost.listDirectory(optionalString(payload.path, 'path'), signal)
     case 'host.createDirectory':
-      return { path: await ctx.directoryPickerController.createDirectory(requireString(payload?.path, 'path'), requireString(payload?.name, 'name')) }
+      return { path: await runtimeOf(ctx).mobileHost.createDirectory(requireString(payload?.path, 'path'), requireString(payload?.name, 'name')) }
 
     case 'workspace.list':
       expectObject(payload)
@@ -586,7 +577,9 @@ function normalizeConfig(value) {
     : freezePlainObject(value.hostDescription, 'hostDescription')
   return Object.freeze({
     maxRequestBytes: boundedInteger(value.maxRequestBytes ?? DEFAULT_CONFIG.maxRequestBytes, 'maxRequestBytes', 1024, 64 * 1024 * 1024),
-    maxResponseBytes: boundedInteger(value.maxResponseBytes ?? DEFAULT_CONFIG.maxResponseBytes, 'maxResponseBytes', 1024, 64 * 1024 * 1024),
+    maxResponseBytes: value.maxResponseBytes === undefined
+      ? undefined
+      : boundedInteger(value.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES, 'maxResponseBytes', 1024, 64 * 1024 * 1024),
     requestTimeoutMs: boundedInteger(value.requestTimeoutMs ?? DEFAULT_CONFIG.requestTimeoutMs, 'requestTimeoutMs', 1, 10 * 60 * 1000),
     ...(hostDescription === undefined ? {} : { hostDescription }),
   })
@@ -664,17 +657,17 @@ function normalizeQueueContent(content) {
 }
 
 async function readDefaultSelection(ctx) {
-  const service = ctx?.agentDefaultModel
-  if (!service || typeof service.currentSelection !== 'function') return undefined
-  const value = await service.currentSelection()
+  const service = runtimeOf(ctx).mobileHost
+  if (!service || typeof service.defaultSelection !== 'function') return undefined
+  const value = await service.defaultSelection()
   return isSelection(value) ? value : undefined
 }
 
 async function readAttachedSessionCount(ctx, signal) {
-  const agents = ctx?.agents
-  if (agents && typeof agents.list === 'function') {
-    const rows = await agents.list()
-    if (Array.isArray(rows)) return rows.length
+  const port = runtimeOf(ctx).mobileHost
+  if (typeof port?.attachedCount === 'function') {
+    const count = await port.attachedCount()
+    if (Number.isSafeInteger(count) && count >= 0) return count
   }
   // The official Agent list is optional in small test compositions. Avoid
   // invoking session.list here because that would turn describe into a cold
@@ -904,7 +897,7 @@ function sendJson(res, status, value, maxBytes) {
   let body
   try { body = JSON.stringify(value) } catch { body = JSON.stringify({ error: 'response unavailable' }); status = 500 }
   if (body === undefined) body = JSON.stringify({ error: 'response unavailable' })
-  if (Buffer.byteLength(body, 'utf8') > maxBytes) {
+  if (maxBytes !== undefined && Buffer.byteLength(body, 'utf8') > maxBytes) {
     status = 413
     body = JSON.stringify({ error: 'response too large' })
   }
@@ -955,7 +948,10 @@ const PUBLIC_ERROR_MESSAGES = Object.freeze({
 
 function safePublicError(error) {
   const code = safeErrorCode(error)
-  const message = PUBLIC_ERROR_MESSAGES[code] ?? genericErrorMessage(code)
+                                                                                                                                             
+  const searchDisabled = code === 'gateway/capability-unavailable' && error?.code === 'runtime-interface/capability-unavailable' &&
+    error?.details?.method === 'search' && error?.details?.reason === 'session-query-disabled'
+  const message = searchDisabled ? 'remote session search is disabled by the host indexing policy' : PUBLIC_ERROR_MESSAGES[code] ?? genericErrorMessage(code)
   return {
     code,
     message,

@@ -1,9 +1,8 @@
-- id: connection
-  inject:
-    - webRuntime
-    - webServer
+# 公开打包追溯：docs/PUBLIC-CHANGES.md                                                           
+                                                                                                                                    
+                                                                                                                                                
+                                                                                                                                          
 - insert:
     - id: runtime-interface
       name: dsh-runtime-interface
-      config:
-        upstreamVersion: '0.1.2-rc.1'
+      config: {}

@@ -1,6 +1,7 @@
 {
   "name": "dsh-browser-host-hub-rc1",
   "version": "0.1.0-rc.1",
+  "private": true,
   "description": "Bounded rc1 browser multi-Host official-wire BFF and transport hook",
   "type": "module",
   "main": "./src/index.js",
@@ -30,8 +31,8 @@
     "ws": "8.21.3"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "4.0.2",
-    "@deepseek-ai/dsh-client-connection": "0.1.2-rc.1 || 0.1.5-rc.2",
-    "@deepseek-ai/dsh-host-webserver": "0.1.2-rc.1 || 0.1.5-rc.2"
+    "@deepseek-ai/cordis": "4.0.2 || 4.0.4",
+    "@deepseek-ai/dsh-client-connection": "0.1.2-rc.1 || 0.1.5-rc.2 || 0.2.0-rc.2",
+    "@deepseek-ai/dsh-host-webserver": "0.1.2-rc.1 || 0.1.5-rc.2 || 0.2.0-rc.2"
   }
 }

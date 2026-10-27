@@ -1,7 +1,11 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                               
+                                                                                                                                                   
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { apply, CODEX_ALIAS, inject } from '../packages/subscriptions-compat-rc1/src/index.js'
+import { apply as businessApply, CODEX_ALIAS, inject } from '../packages/subscriptions-compat-rc1/src/index.js'
+
+import { installSubscriptions as apply } from '../packages/runtime-interface/src/subscriptions.js'
 
 function harness({ descriptor = undefined, proto = undefined, config = {} } = {}) {
   const calls = []
@@ -68,7 +72,7 @@ test('captures codex registration once and appends an atomic alias', async () =>
 test('installs the llm wrapper before publishing the readiness gate', () => {
   const h = harness()
   const dispose = apply(h.ctx)
-  assert.deepEqual(inject, ['llm'])
+  assert.deepEqual(inject, ['runtimeInterface'])
   assert.deepEqual(h.provided.map(item => item.name), ['subscriptionsCompatReady'])
   assert.deepEqual(h.injections[0].deps, ['web', 'settings', 'loader'])
   const adapter = adapterStub()

@@ -1,3 +1,4 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                 
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createRuntimeInterface, LEGACY_RUNTIME_VERSION, CURRENT_RUNTIME_VERSION, upstreamToCanonicalWire, canonicalToBrowserWire, canonicalToMobileHistoryEvent } from '../packages/runtime-interface/src/index.js'

@@ -1,4 +1,7 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                         
+                                                                                                                                             
 import store from './bootstrap-store.cjs'
+                                                                                                                                 
 import { createBootstrapPublisher } from './publisher.js'
 
 export const name = 'mobile-bootstrap-rc1'
@@ -13,7 +16,8 @@ export function apply(ctx, { publisherOptions = {} } = {}) {
   if (!endpoint || typeof endpoint !== 'object') throw new TypeError('runtimeInterface.localBootstrapEndpoint is required')
   const port = store.portNumber(endpoint.port)
   if (typeof endpoint.authenticatedRootUrl !== 'string') throw new Error('BOOTSTRAP_INVALID_URL')
-  const options = { ...publisherOptions, port, authenticatedRootUrl: endpoint.authenticatedRootUrl }
+  const authAdapterSource = ctx.runtimeInterface?.localBootstrapCredentialAdapter?.()
+  const options = { ...publisherOptions, port, authenticatedRootUrl: endpoint.authenticatedRootUrl, authAdapterSource }
   if (options.onFailure === undefined) options.onFailure = reportBootstrapFailure
   return ctx.effect(
     () => createBootstrapPublisher(options),

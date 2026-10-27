@@ -1,6 +1,7 @@
 {
   "name": "dsh-mobile-controller-compat-rc1",
   "version": "0.1.0-rc.1",
+  "private": true,
   "description": "Android business RPC compatibility bridge for the official DSH rc1 controllers",
   "type": "module",
   "main": "./src/index.js",
@@ -29,13 +30,13 @@
     "dsh-runtime-interface": "workspace:*"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-host-directory-picker-browse": "0.1.2-rc.1",
-    "@deepseek-ai/dsh-client-ui-directory-picker-browse": "0.1.2-rc.1 || 0.1.2-rc.1-plugin.3",
-    "@deepseek-ai/cordis": "4.0.2",
-    "@deepseek-ai/dsh-api-session-controller": "0.1.2-rc.1 || 0.1.5-rc.2",
-    "@deepseek-ai/dsh-api-workspace-controller": "0.1.2-rc.1 || 0.1.5-rc.2",
-    "@deepseek-ai/dsh-client-connection": "0.1.2-rc.1 || 0.1.5-rc.2",
-    "@deepseek-ai/dsh-host-webserver": "0.1.2-rc.1 || 0.1.5-rc.2",
-    "@deepseek-ai/dsh-session": "0.1.2-rc.1 || 0.1.5-rc.2"
+    "@deepseek-ai/dsh-host-directory-picker-browse": "0.1.2-rc.1 || 0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-directory-picker-browse": "0.1.2-rc.1 || 0.1.2-rc.1-plugin.3 || 0.1.2-rc.1-plugin.4 || 0.2.0-rc.2",
+    "@deepseek-ai/cordis": "4.0.2 || 4.0.4",
+    "@deepseek-ai/dsh-api-session-controller": "0.1.2-rc.1 || 0.1.5-rc.2 || 0.2.0-rc.2",
+    "@deepseek-ai/dsh-api-workspace-controller": "0.1.2-rc.1 || 0.1.5-rc.2 || 0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-connection": "0.1.2-rc.1 || 0.1.5-rc.2 || 0.2.0-rc.2",
+    "@deepseek-ai/dsh-host-webserver": "0.1.2-rc.1 || 0.1.5-rc.2 || 0.2.0-rc.2",
+    "@deepseek-ai/dsh-session": "0.1.2-rc.1 || 0.1.5-rc.2 || 0.2.0-rc.2"
   }
 }

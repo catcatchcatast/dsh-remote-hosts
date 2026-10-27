@@ -1,3 +1,4 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                   
 import { randomUUID } from 'node:crypto'
 
 import { WebError } from '@deepseek-ai/dsh-web'

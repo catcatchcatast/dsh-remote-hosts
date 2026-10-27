@@ -1,0 +1,6 @@
+dsh-composer-history 0.8.7: unmodified src/client/recall.ts
+Upstream: https://github.com/PerryLink/dsh-composer-history.git
+License: Apache-2.0; full text: LICENSE.composer-history.
+Retained source: packages/remote-hosts/src/third_party/composer-history/recall.ts
+SHA-256: 6f49702a280256ed18d58323afe84934fa2e8e643f8455ac9f94b2a8c4c7f51e
+The current-session adapter is independently authored.

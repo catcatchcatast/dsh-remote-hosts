@@ -1,3 +1,4 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                     
 
 /** Bind the official Connection RPC registry to the caller's Cordis scope. */
 import { symbols, withProps } from '@deepseek-ai/cordis'

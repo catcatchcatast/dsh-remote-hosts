@@ -1,6 +1,9 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                     
+                                                                                                                                         
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
+                                                                                                                                           
 
 export const FILE_PROXY_PREFIX = '/__dsh/remote-files'
 const SIDEBAR_API_METHODS = new Set(['session.cwd', 'fs.tree', 'fs.search', 'fs.read', 'fs.write'])
@@ -180,4 +183,23 @@ export function fileProxyBootstrap() {
       return original(input,init);
     };
   })();`
+}
+
+/** Exact native binary RPC relay; no multipart parse, result rewrite, or cookie forwarding. */
+export async function relayWorkspaceFileBytes(perHost, hostId, message, response, signal) {
+  const source = typeof perHost === 'function' ? perHost() : perHost
+  const host = source instanceof Map ? source.get(hostId) : source?.[hostId]
+  if (typeof host?.raw !== 'function') throw new Error('Workspace file transport is unavailable')
+  signal.throwIfAborted()
+  if (!['workspaceFiles/readBytes', 'officeToPdf/render'].includes(message?.method)) throw new Error('Native binary endpoint is unavailable')
+  const upstream = await host.raw(message.method === 'officeToPdf/render' ? '/api/officeToPdf/render' : '/api/workspaceFiles/readBytes', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(message), signal,
+  })
+  if (signal.aborted) { await upstream.body?.cancel(); signal.throwIfAborted() }
+  const headers = { 'cache-control': 'no-store' }
+  const contentType = upstream.headers.get('content-type')
+  if (contentType !== null) headers['content-type'] = contentType
+  response.writeHead(upstream.status, headers)
+  if (upstream.body) await pipeline(Readable.fromWeb(upstream.body), response, { signal })
+  else response.end()
 }

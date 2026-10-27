@@ -1,3 +1,5 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                     
+                                                                                                                                     
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -47,13 +49,14 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       const manifest = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8'))
       if (!manifest.scripts?.build) continue
       // Only package-defined builds run; npm executes on the explicit package cwd.
-      const npmCli = path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js')
-      const result = spawnSync(process.execPath, [npmCli, 'run', 'build'], { cwd, stdio: 'inherit', windowsHide: true })
+      const result = spawnSync(process.execPath, ['build.mjs'], { cwd, stdio: 'inherit', windowsHide: true })
       if (result.error) throw result.error
       if (result.status !== 0) process.exit(result.status ?? 1)
     }
   } else if (command === 'test') {
-    const result = spawnSync(process.execPath, ['--test', ...releaseTestFiles()], { cwd: workspaceRoot, stdio: 'inherit', windowsHide: true })
+    const native = process.env.DSH_OFFICIAL_021_ROOT || workspaceRoot
+    const env = { ...process.env, DSH_OFFICIAL_021_ROOT: native }
+    const result = spawnSync(process.execPath, ['--experimental-vm-modules', '--test', ...releaseTestFiles()], { cwd: workspaceRoot, stdio: 'inherit', windowsHide: true, env })
     if (result.error) throw result.error
     process.exit(result.status ?? 1)
   } else throw new Error('USAGE: release-profile.mjs build|test')

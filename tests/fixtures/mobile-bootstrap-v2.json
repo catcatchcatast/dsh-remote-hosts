@@ -1,0 +1,29 @@
+{
+  "request": { "version": 2, "port": 3080, "forwardPort": 33080, "generation": "42" },
+  "success": { "version": 2, "ok": true, "port": 3080, "pid": 12345, "instanceId": "11111111-1111-4111-8111-111111111111", "forwardPort": 33080, "generation": "42", "requestHeaders": { "Cookie": "synthetic_name=synthetic_opaque_value" } },
+  "headerAccepted": [
+    { "Cookie": "synthetic_name=synthetic_opaque_value" },
+    { "Authorization": "Bearer synthetic_opaque_value" },
+    { "X-DSH-Request-Credential": "synthetic_opaque_value" }
+  ],
+  "headerRejected": [
+    { "hOsT": "127.0.0.1:33080" },
+    { "Authorization": "Bearer synthetic\r\nHost: other" },
+    { "Cookie": "synthetic=a", "cookie": "synthetic=b" },
+    { "Content-Type": "application/json" },
+    { "cAcHe-Control": "no-store" },
+    { "Sec-Fetch-Site": "same-origin" },
+    { "Proxy-Authorization": "synthetic" },
+    { "X-Forwarded-Host": "synthetic" }
+  ],
+  "errors": [
+    { "version": 2, "ok": false, "error": { "code": "INVALID_REQUEST", "retryable": false } },
+    { "version": 2, "ok": false, "error": { "code": "UNAVAILABLE", "retryable": true } },
+    { "version": 2, "ok": false, "error": { "code": "UNSAFE_MATERIAL", "retryable": false } },
+    { "version": 2, "ok": false, "error": { "code": "STALE_INSTANCE", "retryable": true } },
+    { "version": 2, "ok": false, "error": { "code": "AUTHENTICATION_FAILED", "retryable": false } },
+    { "version": 2, "ok": false, "error": { "code": "TIMEOUT", "retryable": true } },
+    { "version": 2, "ok": false, "error": { "code": "CANCELLED", "retryable": false } },
+    { "version": 2, "ok": false, "error": { "code": "OUTPUT_TOO_LARGE", "retryable": false } }
+  ]
+}

@@ -1,3 +1,4 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                     
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { MobileAssistantStream, MobileAssistantStreamError } from '../packages/runtime-interface/src/mobile-assistant-stream.js'

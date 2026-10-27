@@ -1,3 +1,4 @@
+// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                             
 const CONNECTION_PREFIX = 'HOST_CONNECTION_FAILED_'
 const PUBLIC_CODES = new Set([
   'HOST_ID_INVALID',
