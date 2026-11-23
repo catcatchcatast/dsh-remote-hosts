@@ -52,11 +52,15 @@ function queueInbox(items) {
   return { 'next-turn': items.filter(item => item.target !== 'next-step').map(item => item.message),
     'next-step': items.filter(item => item.target === 'next-step').map(item => item.message) }
 }
-/** One official event may change several projections; the stable Hub keeps keyed updates. */
-export function canonicalControlFrames(frame) {
+/** Keep a native batch for capable browsers and adapt it to keyed updates for older readers. */
+export function canonicalControlFrames(frame, batched = false) {
   if (frame?.type !== 'projection' || !Array.isArray(frame.changes)) return [canonicalControl(frame)]
-  return frame.changes.map(change => {
+  for (const change of frame.changes) {
     if (typeof change?.key !== 'string' || !Object.hasOwn(change, 'val')) invalid('Invalid control projection change')
+    if (batched && change.key === 'inbox') inboxQueue(change.val)
+  }
+  if (batched) return [frame]
+  return frame.changes.map(change => {
     return canonicalControl({ type: 'projection', sessionId: frame.sessionId, seq: frame.seq, key: change.key, value: change.val })
   })
 }

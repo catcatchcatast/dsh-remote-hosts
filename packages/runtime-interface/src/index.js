@@ -25,7 +25,7 @@ export { createWorkspaceFileReader, cachedWorkspaceResponse } from './workspace-
 export { convertPreviewVideo, convertPreviewOffice } from './preview-conversion.js'
 // Public change history: docs/PUBLIC-CHANGES.md
 import { WEB_020_RUNTIME_VERSION, WEB_021_RUNTIME_VERSION, WEB_022_RUNTIME_VERSION, WEB_022_RC3_RUNTIME_VERSION, WEB_022_RC5_RUNTIME_VERSION, isWeb022RuntimeVersion, isModernWebRuntimeVersion, isWebRuntimeVersion, toolResultEvent, canonicalControl, canonicalControlFrames, browserControl, readLegacyProjections, legacyJobRows } from './web-020.js'
-export { WEB_020_RUNTIME_VERSION, scopeProjection, scopeJobFrame, createJobStreamEncoder, applyControlQueue } from './web-020.js'
+export { WEB_020_RUNTIME_VERSION, isWeb022RuntimeVersion, canonicalControlFrames, scopeProjection, scopeJobFrame, createJobStreamEncoder, applyControlQueue } from './web-020.js'
 // Public change history: docs/PUBLIC-CHANGES.md
 import { createHostInteractionSource, createInteractionPeerClient, registerHostInteractionProtocol } from './host-interactions.js'
 // Public change history: docs/PUBLIC-CHANGES.md
@@ -742,7 +742,7 @@ export function wrapHostCarrier({ hostId, carrier, upstreamVersion = LEGACY_RUNT
       if (!isWebRuntimeVersion(version) && endpoint.startsWith('job/')) throw new RuntimeInterfaceError('runtime-interface/capability-unavailable', 'This host has no independent job output or kill interface', { endpoint })
       return mapResult(endpoint, await carrier.call(endpoint, mapRequest(endpoint, canonicalRequest), signal), state)
     },
-    async *open(endpoint, canonicalRequest, signal, { diagnosticOwner = 'interface' } = {}) {
+    async *open(endpoint, canonicalRequest, signal, { diagnosticOwner = 'interface', batchedControl = false } = {}) {
       assertCapability(endpoint)
       const state = makeState(); state.sessionHistory = HISTORY_ENDPOINTS.has(endpoint)
       const input = toCanonicalRequest(endpoint, canonicalRequest, hostId)
@@ -760,7 +760,7 @@ export function wrapHostCarrier({ hostId, carrier, upstreamVersion = LEGACY_RUNT
         source = !isWebRuntimeVersion(version) && endpoint === 'job/list' ? legacyJobRows(carrier, request?.args?.request, signal) : await carrier.open(endpoint, request, signal)
         if (!assistantStream) {
           for await (const value of source) {
-            const mapped = endpoint === 'session/control' ? canonicalControlFrames(value).map(frame => mapResult(endpoint, frame, state)) : [mapResult(endpoint, value, state)]
+            const mapped = endpoint === 'session/control' ? canonicalControlFrames(value, batchedControl).map(frame => mapResult(endpoint, frame, state)) : [mapResult(endpoint, value, state)]
             trace.observe(value)
             stage = 'live'
             yield* mapped

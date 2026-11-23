@@ -68,7 +68,7 @@ window.__ModuleLoader__.load({
 					return read.sessions.refresh();
 				};
 				Promise.resolve(first).then(complete, complete).then(() => release(read), () => release(read));
-			});
+			}, () => scope.get("sessions")?.refresh());
 			const dispose = () => {
 				disposed = true;
 				completedRead = void 0;

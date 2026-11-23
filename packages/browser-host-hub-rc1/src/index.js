@@ -1,5 +1,6 @@
 // Public change history: docs/PUBLIC-CHANGES.md
 import { once } from 'node:events'
+import { isDeepStrictEqual } from 'node:util'
 import { InteractionView } from './interaction-view.js'
 // Public change history: docs/PUBLIC-CHANGES.md
 import { isCoreInteractionFrame, decodeBrowserInteractionResult, ADMIN_CATALOG_ENDPOINTS } from 'dsh-runtime-interface'
@@ -14,7 +15,7 @@ import { BROWSER_STREAM_PATH, registerStreamMux, serveStreamSocket } from './str
 // Public change history: docs/PUBLIC-CHANGES.md
 import { CURRENT_RUNTIME_VERSION, LEGACY_RUNTIME_VERSION, canonicalToBrowserWire, createBrowserStreamEncoder, normalizeRuntimeVersion, upstreamToCanonicalWire, wrapHostCarrier, classifyStreamFailure, markStreamFailure, sanitizeStreamFailure, streamFailureDiagnosticCode } from 'dsh-runtime-interface'
 import { WORKSPACE_FILE_ENDPOINTS, OFFICE_TO_PDF_ENDPOINTS, WORKSPACE_BINARY_ENDPOINTS, workspaceFileBytesRequest, workspaceIdentityReferences, mapWorkspaceRequest, scopeWorkspaceValue, scopeWorkspaceFrame } from 'dsh-runtime-interface'
-import { scopeProjection, scopeJobFrame, createJobStreamEncoder, applyControlQueue } from 'dsh-runtime-interface'
+import { canonicalControlFrames, isWeb022RuntimeVersion, scopeProjection, scopeJobFrame, createJobStreamEncoder, applyControlQueue } from 'dsh-runtime-interface'
 import { decodeBrowserRequest, encodeBrowserResponse, browserStreamFailureCodecSource, browserColdRestoreReaderSource } from 'dsh-runtime-interface/browser'
 
 export { BROWSER_STREAM_PATH, registerStreamMux, serveStreamSocket } from './stream-mux.js'
@@ -548,6 +549,7 @@ function mapPayloadForHost(endpoint, payload, hostId, codec) {
   let result = { ...payload }
   delete result.__hostId
   delete result.__pageId
+  delete result.__directoryRefresh
   delete result.__coldRestore
   if (!isRecord(result.args)) return result
   if (DIRECT_AGENT_ENDPOINTS.has(endpoint)) result = cloneArgsPayload(result, args => ({ ...args, ...typeof args.agentId === 'string' ? { agentId: rawIdentity(codec, hostId, args.agentId) } : {} }))
@@ -616,6 +618,9 @@ export function mapControlFrame(frame, hostId, codec = undefined) {
   }
   if (typeof frame.sessionId === 'string') {
     const result = { ...frame, sessionId: normalized.encodeCompositeId(hostId, frame.sessionId) }
+    if (frame.type === 'projection' && Array.isArray(frame.changes)) result.changes = frame.changes.map(({ key, val }) => ({
+      key, val: scopeProjection({ values: { [key]: val } }, hostId, normalized).values[key],
+    }))
     if (frame.type === 'projection' && typeof frame.key === 'string') result.value = scopeProjection({ values: { [frame.key]: frame.value } }, hostId, normalized).values[frame.key]
     if (frame.type === 'queue' && Array.isArray(frame.items)) result.items = frame.items.map(item => mapQueueItem(item, hostId, normalized))
     if (frame.type === 'jobs' && Array.isArray(frame.jobs)) result.jobs = frame.jobs.map(job => mapJob(job, hostId, normalized))
@@ -799,6 +804,10 @@ function applyAggregateIncrement(endpoint, state, frame) {
     return { ...state, items, archivedSessionIds: frame.type === 'archived' ? frame.archivedSessionIds : state.archivedSessionIds,
       pins: frame.type === 'pins' ? frame.pins : state.pins }
   }
+  if (frame.type === 'projection' && Array.isArray(frame.changes)) {
+    for (const change of canonicalControlFrames(frame)) state = applyAggregateIncrement(endpoint, state, change)
+    return state
+  }
   if (frame.type === 'queue') return applyControlQueue(state, frame)
   if (frame.type === 'jobs') return { ...state, jobs: { ...state.jobs, [frame.sessionId]: frame.jobs } }
   if (frame.type === 'projection') {
@@ -810,7 +819,7 @@ function applyAggregateIncrement(endpoint, state, frame) {
   return state
 }
 
-function replacementIncrements(endpoint, previous, next, combined) {
+function replacementIncrements(endpoint, previous, next, combined, batchedControl) {
   const updates = []
   if (endpoint === 'workspace/follow') {
     const nextIds = new Set(next.items.map(item => item.workspaceId))
@@ -826,9 +835,12 @@ function replacementIncrements(endpoint, previous, next, combined) {
   // Do not invent a null value or a seq to clear a projection.
   for (const [sessionId, projection] of Object.entries(previous.projections)) {
     const values = next.projections[sessionId]?.values ?? {}
+    if (next.projections[sessionId]?.asOfSeq < projection.asOfSeq) return undefined
+    if (next.projections[sessionId]?.asOfSeq === projection.asOfSeq && Object.keys(projection.values).some(key => !isDeepStrictEqual(projection.values[key], values[key]))) return undefined
     if (Object.keys(projection.values).some(key => !own(values, key))) return undefined
   }
   for (const sessionId of new Set([...Object.keys(previous.queues), ...Object.keys(next.queues)])) {
+    if (batchedControl && next.projections[sessionId]?.values.inbox !== undefined) continue
     const seq = next.projections[sessionId]?.asOfSeq
     updates.push({ type: 'queue', sessionId, items: next.queues[sessionId] ?? [],
       ...(Number.isSafeInteger(seq) && seq >= 0 ? { seq } : {}) })
@@ -837,6 +849,13 @@ function replacementIncrements(endpoint, previous, next, combined) {
     updates.push({ type: 'jobs', sessionId, jobs: next.jobs[sessionId] ?? [] })
   }
   for (const [sessionId, projection] of Object.entries(next.projections)) {
+    if (batchedControl) {
+      const prior = previous.projections[sessionId]
+      if (prior?.asOfSeq === projection.asOfSeq && isDeepStrictEqual(prior.values, projection.values)) continue
+      const changes = Object.entries(projection.values).map(([key, val]) => ({ key, val }))
+      if (changes.length) updates.push({ type: 'projection', sessionId, seq: projection.asOfSeq, changes })
+      continue
+    }
     for (const [key, value] of Object.entries(projection.values)) updates.push({ type: 'projection', sessionId, key, value, seq: projection.asOfSeq })
   }
   return updates
@@ -1164,15 +1183,37 @@ export function createBrowserBootstrapScript(options = {}) {
   const listeners=new Set();
   let coldRestoreReader;
   let coldRestoreConsumed;
+  let refreshDirectory;
+  let directoryRevision=0;
+  let directoryReadRevision=0;
+  let directoryAccepted=0;
+  const recoveryRequest=Symbol();
+  let refreshing=false;
+  const refreshInvalidatedDirectory=async()=>{
+    if(refreshing || !refreshDirectory || directoryAccepted>=directoryRevision) return;
+    refreshing=true;
+    try{
+      const refresh=refreshDirectory;
+      while(refresh===refreshDirectory && directoryAccepted<directoryRevision){
+        const wanted=directoryRevision;
+        await refresh();
+        // Join an older SDK single flight, then start the read for this signal.
+        if(refresh===refreshDirectory && directoryReadRevision<wanted) await refresh();
+        if(directoryRevision===wanted) break;
+      }
+    }catch(error){console.error('[browser-host-hub-rc1] directory refresh failed',error);}
+    finally{refreshing=false;}
+  };
   let coldDirectoryPending=false;
   let coldDirectoryRead;
   const coldRequest=Symbol();
   const state={
-    bindColdRestoreReader(reader,consumed){
+    bindColdRestoreReader(reader,consumed,refresh){
       if(typeof reader!=='function') throw new TypeError('cold restore reader must be a function');
       coldRestoreReader=reader;
       coldRestoreConsumed=consumed;
-      return ()=>{if(coldRestoreReader===reader){coldRestoreReader=undefined;coldRestoreConsumed=undefined;coldDirectoryPending=false;coldDirectoryRead=undefined;}};
+      refreshDirectory=refresh;
+      return ()=>{if(coldRestoreReader===reader){coldRestoreReader=undefined;coldRestoreConsumed=undefined;refreshDirectory=undefined;coldDirectoryPending=false;coldDirectoryRead=undefined;}};
     },
     getSelectedHost(){return selectedHost;},
     setSelectedHost(value){
@@ -1232,8 +1273,16 @@ export function createBrowserBootstrapScript(options = {}) {
       const payload={...message.payload};
       let read;
       if(selectedHost!==undefined && !own(payload,SELECTOR)) payload[SELECTOR]=selectedHost;
-      if(target.endpoint==='$events' || target.endpoint==='session/list') payload.__pageId=pageId;
-      if(target.endpoint==='session/list' && firstSessionList){
+      if(target.endpoint==='$events' || target.endpoint==='session/list' || target.endpoint==='session/control') payload.__pageId=pageId;
+      if(target.endpoint==='$events' && refreshDirectory) payload.__directoryRefresh=true;
+      let recovery;
+      if(target.endpoint==='session/list' && directoryAccepted<directoryRevision){
+        recovery=directoryRevision;
+        firstSessionList=false;
+        directoryReadRevision=directoryRevision;
+        payload.__coldRestore={orderedRefresh:'complete'};
+      }
+      if(target.endpoint==='session/list' && firstSessionList && !payload.__coldRestore){
         firstSessionList=false;
         let id,value; try{value=coldRestoreReader?.();id=readColdRestoreSession(()=>value);}catch{}
         if(id!==undefined){
@@ -1246,6 +1295,7 @@ export function createBrowserBootstrapScript(options = {}) {
       }
       if(target.endpoint==='session/list' && coldDirectoryPending && !payload.__coldRestore){payload.__coldRestore={orderedRefresh:'complete'};read=coldDirectoryRead&&!coldDirectoryRead.signal.aborted?{...coldDirectoryRead,completion:true}:undefined;}
       const decorated={...init,body:JSON.stringify({...message,payload})};
+      if(recovery) decorated[recoveryRequest]=recovery;
       if(read){decorated[coldRequest]=read;if(!read.completion)decorated.signal=init.signal?AbortSignal.any([init.signal,read.signal]):read.signal;}
       return decorated;
     }
@@ -1296,6 +1346,7 @@ export function createBrowserBootstrapScript(options = {}) {
   const deliver=(record,frame)=>{
     if(record.terminal) return;
     if(frame.type==='item'){
+      if(record.endpoint==='$events' && frame.value?.type==='directory-refresh'){directoryRevision++;void refreshInvalidatedDirectory();return;}
       const waiter=record.waiters.shift();
       record.count++;
       if(waiter) waiter.resolve({done:false,value:frame.value});
@@ -1426,16 +1477,18 @@ export function createBrowserBootstrapScript(options = {}) {
     if(STREAM_ENDPOINTS.has(target.endpoint)) return streamResponse(JSON.parse(decorated.body),decorated.signal);
     const path=BFF_PREFIX==='/' ? '/'+target.endpoint : BFF_PREFIX+'/'+target.endpoint;
     const read=decorated[coldRequest];
+    const recovery=decorated[recoveryRequest];
     const request=nativeFetch(new URL(path,target.url.origin).href,decorated);
     if(target.endpoint!=='session/list') return request;
     return request.then(response=>{
       const phase=response.headers.get('X-DSH-Cold-Directory');
       const json=response.json;let consumed=false;
-      if(!read && phase!=='complete') return response;
+      if(!read && !recovery && phase!=='complete') return response;
       response.json=function(...args){
         return json.apply(this,args).then(value=>{
           if(this===response && !consumed){
             consumed=true;
+            if(recovery && phase==='complete' && value?.result?.ok===true && !decorated.signal?.aborted) directoryAccepted=Math.max(directoryAccepted,recovery);
             if(read?.signal.aborted && !read.completion){if(coldRestoreConsumed===read.consume) read.consume(undefined,'failed');throw read.signal.reason;}
             if((phase==='complete' && value?.result?.ok===true && !decorated.signal?.aborted) || (read && !read.completion && phase!=='target')) coldDirectoryPending=false;
             if(read && (!read.completion || !decorated.signal?.aborted) && coldRestoreConsumed===read.consume) read.consume(value,phase);
@@ -1702,18 +1755,20 @@ export class BrowserHostHub {
     delete payload[HOST_SELECTOR]
     const requestKey = endpoint === 'session/list' ? JSON.stringify(payload) : undefined
     const results = new Array(entries.length)
+    const reads = new Array(entries.length)
     const calls = entries.map((entry, index) => (requestKey === undefined
       ? this.#boundedAggregateHostCall(endpoint, payload, signal, entry.hostId)
-      : this.#boundedSessionListHostCall(payload, signal, entry.hostId, requestKey, pageId, orderedComplete))
+      : this.#boundedSessionListHostCall(payload, signal, entry.hostId, requestKey, pageId, orderedComplete, false, read => { reads[index] = read }))
       .then(result => { results[index] = result; return result }))
     const all = Promise.all(calls)
     // The remaining read lifetimes continue after an early reply; observe refusals.
     void all.catch(() => {})
+    let retiredRead
     try {
       if (preferred) {
         const index = entries.findIndex(entry => entry.hostId === preferred.hostId)
         const result = await calls[index]
-        const refresh = this.#sessionListRefreshes.get(`${preferred.hostId}\u0000${requestKey}`)
+        const refresh = reads[index]
         const item = result.ok === true ? result.value?.items?.find(item => item.sessionId === this.#codec.encodeCompositeId(preferred.hostId, preferred.rawId)) : undefined
         const archived = this.#archivedSessionIds.get(preferred.hostId)
         const unchanged = (this.#sessionListSessionVersions.get(preferred.hostId)?.get(preferred.rawId) ?? 0) === (refresh?.startVersions.get(preferred.rawId) ?? 0)
@@ -1723,7 +1778,16 @@ export class BrowserHostHub {
     } finally {
       if (requestKey !== undefined && pageId) entries.forEach((entry, index) => {
         const key = `${entry.hostId}\u0000${requestKey}`
-        const refresh = this.#sessionListRefreshes.get(key)
+        const refresh = reads[index]
+        const page = refresh?.targets.find(target => target.pageId === pageId)
+        if (refresh?.invalidated || refresh?.expired || page?.hostState && page.hostState.generation !== page.generation) {
+          retiredRead = failure(new HostUnavailableError(entry.hostId))
+          if (refresh?.expired && !signal.aborted) {
+            const active = [...this.#events.values()].find(state => state.pageId === pageId)?.hostStates?.get(entry.hostId)
+            if (active) { active.directoryPending = true; active.restoreDirectory?.() }
+          }
+          return
+        }
         if (!refresh) {
           if (!signal.aborted && results[index]?.ok === false) {
             const state = [...this.#events.values()].find(state => state.pageId === pageId)
@@ -1740,12 +1804,16 @@ export class BrowserHostHub {
           else {
             target.deferred = true
             refresh.deferred = true
-            if (!signal.aborted) target.hostState?.restoreDirectory?.()
+            if (!signal.aborted && target.hostState) {
+              target.hostState.directoryPending = true
+              target.hostState.restoreDirectory?.()
+            }
           }
         }
         this.#publishSessionListRefresh(key, refresh)
       })
     }
+    if (retiredRead) return retiredRead
     let unsafeFallback
     const usable = results.flatMap((result, index) => {
       if (requestKey === undefined) return result?.ok === true ? [result] : []
@@ -1885,7 +1953,7 @@ export class BrowserHostHub {
       const cold = refresh.targets.filter(target => target.pageId && target.pageId === state.pageId)
       for (const target of cold) if (!target.delivered && target.state === undefined) {
         Object.assign(target, { state, hostState, generation })
-        hostState.directoryPending = true
+        if (target.deferred) hostState.directoryPending = true
       }
       if (cold.length === 0 && !refresh.completed && hostState.ready === true && !refresh.targets.some(target => target.state === state && target.hostState === hostState && target.generation === generation)) {
         refresh.targets.push({ state, hostState, generation, versions: new Map(refresh.startVersions) })
@@ -1900,7 +1968,11 @@ export class BrowserHostHub {
       if (target.delivered || target.waiting) continue
       if (target.pageId && target.deferred && (target.state === undefined || target.hostState?.ready !== true)) continue
       if (refresh.deferred && (!target.pageId || target.deferred) && refresh.result?.ok === true) {
-        for (const item of refresh.result.value?.items ?? []) {
+        if (target.state?.directoryRefresh) {
+          if ((target.deferred || target.hostState.directoryPending) && target.hostState.ready && target.hostState.generation === target.generation) {
+            target.state.queue.push({ hostId: refresh.hostId, generation: target.generation, frame: { type: 'directory-refresh' } })
+          }
+        } else for (const item of refresh.result.value?.items ?? []) {
           if (!this.#canPublishLateSessionItem(target, refresh.hostId, item)) continue
           const rawId = rawSessionIdentity(item.sessionId, refresh.hostId, this.#codec)
           const version = this.#sessionListSessionVersions.get(refresh.hostId)?.get(rawId) ?? 0
@@ -1931,7 +2003,12 @@ export class BrowserHostHub {
         target.delivered = true
         retired = true
       }
-      if (hostState && retired && refresh.targets.every(target => target.delivered)) refresh.invalidated = true
+      if (hostState && retired) {
+        // New generations must not join this read. Other pages that still own
+        // the old read retain its response and its original lifetime.
+        if (this.#sessionListRefreshes.get(key) === refresh) this.#sessionListRefreshes.delete(key)
+        if (refresh.targets.every(target => target.delivered)) refresh.invalidated = true
+      }
       this.#publishSessionListRefresh(key, refresh)
     }
   }
@@ -1947,7 +2024,7 @@ export class BrowserHostHub {
     return this.#archivedSessionIds.get(hostId)?.has(rawId) !== true
   }
 
-  async #boundedSessionListHostCall(payload, outerSignal, hostId, requestKey, pageId, orderedComplete = false, restoreDirectory = false) {
+  async #boundedSessionListHostCall(payload, outerSignal, hostId, requestKey, pageId, orderedComplete = false, restoreDirectory = false, onRead) {
     const cacheKey = `${hostId}\u0000${requestKey}`
     let refresh = this.#sessionListRefreshes.get(cacheKey)
     if (refresh?.expired || refresh?.invalidated) {
@@ -1968,7 +2045,7 @@ export class BrowserHostHub {
         .then(result => {
           refresh.completed = true
           refresh.result = result
-          if (!refresh.expired && !refresh.invalidated && result.ok === true) this.#rememberSessionListSnapshot(cacheKey, result.value, hostId, startVersions)
+          if (this.#sessionListRefreshes.get(cacheKey) === refresh && !refresh.expired && !refresh.invalidated && result.ok === true) this.#rememberSessionListSnapshot(cacheKey, result.value, hostId, startVersions)
           this.#publishSessionListRefresh(cacheKey, refresh)
           return result
         })
@@ -1981,7 +2058,9 @@ export class BrowserHostHub {
       }, this.#sessionListRefreshTimeoutMs)
       refresh.timer.unref?.()
     }
+    onRead?.(refresh)
     if (restoreDirectory) refresh.deferred = true
+    let pageTarget
     if (pageId) {
       let target = refresh.targets.find(target => target.pageId === pageId && !target.delivered)
       if (!target) {
@@ -1991,7 +2070,7 @@ export class BrowserHostHub {
         if (!target) { target = { versions: new Map(refresh.startVersions) }; refresh.targets.push(target) }
         Object.assign(target, { pageId, state, hostState, generation: hostState?.generation, waiting: true, delivered: false })
       } else target.waiting = true
-      if (target.hostState) target.hostState.directoryPending = true
+      pageTarget = target
     }
 
     let timer
@@ -2008,7 +2087,7 @@ export class BrowserHostHub {
     })
     try {
       const result = await Promise.race([refresh.promise, boundary])
-      if (orderedComplete && (refresh.expired || refresh.invalidated || outerSignal.aborted)) return failure(markStreamFailure(
+      if (refresh.invalidated || pageTarget?.hostState && pageTarget.hostState.generation !== pageTarget.generation || orderedComplete && (refresh.expired || outerSignal.aborted)) return failure(markStreamFailure(
         new BrowserHostHubError('browser-host-hub-rc1/host-unavailable', 'Directory read was retired'),
         { source: 'hub', reason: outerSignal.aborted ? 'aborted' : refresh.expired ? 'transport-timeout' : 'transport-disconnected', stage: 'live' }
       ))
@@ -2130,7 +2209,9 @@ export class BrowserHostHub {
       this.#recordDiagnostic({ phase: 'stream_open', endpoint, hostId, sessionId: this.#diagnosticSessionId(endpoint, payload) })
       try {
         entry = this.#entry(hostId)
-        const source = await entry.carrier.open(endpoint, mapPayloadForHost(endpoint, payload, hostId, this.#codec), signal, { diagnosticOwner: 'consumer' })
+        const source = await entry.carrier.open(endpoint, mapPayloadForHost(endpoint, payload, hostId, this.#codec), signal, {
+          diagnosticOwner: 'consumer', batchedControl: endpoint === 'session/control' && isWeb022RuntimeVersion(this.#browserVersion),
+        })
         for await (const raw of source) {
           const sequence = diagnosticSequence(raw)
           if (sequence !== undefined) lastSeq = sequence
@@ -2227,8 +2308,17 @@ export class BrowserHostHub {
             initial = true
             yield this.#encodeBrowser({ type: 'baseline', value: mergeCurrent([...baselineByHost.values()]) })
           } else if (initial) {
-            const updates = replacementIncrements(endpoint, previous, frame.value, mergeCurrent([...baselineByHost.values()]))
-            if (updates === undefined) { completed = true; return }
+            const updates = replacementIncrements(endpoint, previous, frame.value, mergeCurrent([...baselineByHost.values()]), isWeb022RuntimeVersion(this.#browserVersion))
+            if (updates === undefined) {
+              // A fresh logical control stream alone keeps the SDK's old sequence
+              // watermarks. Its event generation owns the native projection reset.
+              if (payload?.__pageId) {
+                const page = [...this.#events.values()].find(state => state.pageId === payload.__pageId)
+                page?.queue.push({ resetConnection: true })
+              }
+              completed = true
+              return
+            }
             for (const update of updates) {
               const encoded = this.#encodeBrowser(update)
               if (encoded !== undefined) yield encoded
@@ -2362,7 +2452,7 @@ export class BrowserHostHub {
   async *#eventsStream(payload, signal) {
     const outerSignal = abortSignalOf(signal)
     const clientId = makeId('bff-client')
-    const state = { clientId, mappings: new Map(), pageId: typeof payload?.__pageId === 'string' && payload.__pageId.length > 0 && payload.__pageId.length <= 128 ? payload.__pageId : undefined }
+    const state = { clientId, mappings: new Map(), directoryRefresh: payload?.__directoryRefresh === true, pageId: typeof payload?.__pageId === 'string' && payload.__pageId.length > 0 && payload.__pageId.length <= 128 ? payload.__pageId : undefined }
     this.#events.set(clientId, state)
     const entries = this.#entries()
     if (entries.length === 0) {
@@ -2389,6 +2479,7 @@ export class BrowserHostHub {
         const item = await queue.next(outerSignal)
         if (item.done) break
         const packet = item.value
+        if (packet?.resetConnection) { completed = true; return }
         if (packet?.generation !== undefined) {
           const hostState = state.hostStates?.get(packet.hostId)
           const rawId = rawSessionIdentity(sessionIdFromEvent(packet.frame), packet.hostId, this.#codec)
@@ -2559,7 +2650,10 @@ export class BrowserHostHub {
             }
             this.#registerSessionListTargets(hostId, aggregateState, hostState, generation)
             queue.push({ hostId, frame: { type: 'ready', clientId: raw.clientId, host: { home: raw.host.home } } })
-            if (restoreDirectory || hostState.directoryPending) hostState.restoreDirectory()
+            if (restoreDirectory && aggregateState.directoryRefresh) {
+              queue.push({ hostId, generation, frame: { type: 'directory-refresh' } })
+              restoreDirectory = false
+            } else if (restoreDirectory || hostState.directoryPending) hostState.restoreDirectory()
             continue
           }
           if (!generationReady || typeof hostState.remoteClientId !== 'string') throw markStreamFailure(new TypeError('Host $events frame arrived before ready'), classifyStreamFailure({ reason: 'invalid-snapshot' }, { source: 'hub', stage: 'bootstrap' }))

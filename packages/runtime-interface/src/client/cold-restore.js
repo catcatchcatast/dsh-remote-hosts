@@ -43,7 +43,7 @@ export function bindColdRestoreSelection(scope, bridge) {
       return read.sessions.refresh()
     }
     void Promise.resolve(first).then(complete, complete).then(() => release(read), () => release(read))
-  })
+  }, () => scope.get('sessions')?.refresh())
   const dispose = () => { disposed = true; completedRead = undefined; captured?.controller.abort(); release(captured); unbind() }
   // Only the actual same-generation complete response envelope can certify this read.
   return Object.assign(dispose, { completeBaselineAccepted: () => !disposed && completedRead !== undefined && !completedRead.controller.signal.aborted && completedRead.generation.getSnapshot() === completedRead.current })
