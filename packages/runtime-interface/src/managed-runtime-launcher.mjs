@@ -1,7 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                             
-                                                                                                                                                           
-                                                                                                                                                 
-                                                                                                                                       
+// Public change history: docs/PUBLIC-CHANGES.md
 
 import { appendFile, link, mkdir, open, readFile, unlink, writeFile } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'

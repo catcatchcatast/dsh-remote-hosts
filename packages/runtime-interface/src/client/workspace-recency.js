@@ -1,4 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                         
+// Public change history: docs/PUBLIC-CHANGES.md
 import { createElement, useMemo, useState, useEffect } from 'react'
 
 const RECENCY = Symbol.for('dsh.runtime-interface.workspace-recency')

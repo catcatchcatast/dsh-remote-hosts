@@ -1,4 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                             
+// Public change history: docs/PUBLIC-CHANGES.md
 const CREATE = 'create_goal'
 const ORIGINAL = 'create_goal may infer goal intent from a direct human request in any language.'
 const USER_ONLY = 'Goals are created only by the user via /goal; do not create goals yourself.'

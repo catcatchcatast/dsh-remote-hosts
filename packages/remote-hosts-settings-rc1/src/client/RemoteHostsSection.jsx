@@ -1,6 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                   
-                                                                                                                                     
-                                                                                                                                             
+// Public change history: docs/PUBLIC-CHANGES.md
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 const card = {
@@ -82,7 +80,7 @@ function HostCard({ host, t, busy, onAction, onEdit }) {
       </div>
       {host.kind === 'remote' && (
         <p style={muted}>
-          {host.alias} · 127.0.0.1:{host.localPort} → 127.0.0.1:{host.remotePort} · {host.launch}
+          {host.alias} · 127.0.0.1:{host.localPort} → 127.0.0.1:{host.remotePort ?? '—'} · {host.launch}
         </p>
       )}
       {host.kind === 'local' && <p style={muted}>127.0.0.1:{host.localPort}</p>}
@@ -151,7 +149,7 @@ export function RemoteHostsSection({ hostsApi, t }) {
   }, [hostsApi, t])
 
   useEffect(() => {
-                                                                                           
+// Public change history: docs/PUBLIC-CHANGES.md
     const releaseInventory = hostsApi.mountStatusView?.()
     requests.current.live = true
     void refresh()
@@ -216,7 +214,7 @@ export function RemoteHostsSection({ hostsApi, t }) {
       alias: host.alias,
       label: host.label,
       localPort: host.localPort,
-      remotePort: host.remotePort,
+      remotePort: host.remotePort ?? 3080,
       launch: host.launch,
       enabled: host.enabled,
     })

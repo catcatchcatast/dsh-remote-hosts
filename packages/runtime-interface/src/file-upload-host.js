@@ -1,6 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                               
-                                                                                                                                                   
-                                                                                                                                                   
+// Public change history: docs/PUBLIC-CHANGES.md
 import { join } from 'node:path'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { FsError } from '@deepseek-ai/dsh-fs'

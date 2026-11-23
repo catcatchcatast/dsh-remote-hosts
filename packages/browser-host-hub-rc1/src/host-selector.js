@@ -1,7 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                         
-                                                                                                                                     
-                                                                                                                                                                       
-                                                                                                                                                     
+// Public change history: docs/PUBLIC-CHANGES.md
 
 const DEFAULT_HOST_INVENTORY_PATH = '/api/browser-host-hub-rc1/host-inventory'
 const DEFAULT_ROOT_ID = 'dsh-browser-host-selector'

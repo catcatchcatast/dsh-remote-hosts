@@ -1,5 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                          
-                                                                                                   
+// Public change history: docs/PUBLIC-CHANGES.md
 import { createElement, useSyncExternalStore } from 'react'
 import { installWorkspaceRecency } from '../../runtime-interface/src/client/workspace-recency.js'
 const NS = 'remote-hosts.workspace-host-labels'
@@ -21,6 +20,8 @@ export function workspaceHostStyles(hosts, selector, unknown, flat = false) {
     rules.push(selector() + ' > span[class$="_time"]{order:3;}')
     // 原time也显示紧凑交互状态：只给远程flat时间40px下限并右对齐，较长文字仍按原生内容宽度伸展。
     rules.push(selector() + ':not(' + selector('local') + ') > span[class$="_time"]{min-inline-size:4em;text-align:right;}')
+    // 022时间/末尾槽合在原生resting包装层，保留其内部布局；40px延续021时间10px字的4em下限。
+    rules.push(selector() + ':not(' + selector('local') + ') > span[class$="_rowResting"]{order:3;min-inline-size:40px;justify-content:flex-end;}')
     rules.push(selector() + ' > span[class$="_pinIndicator"]{order:4;}')
     rules.push(selector() + ' > span[class$="_rowActions"]{order:5;}')
   }

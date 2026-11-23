@@ -1,4 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                               
+// Public change history: docs/PUBLIC-CHANGES.md
 import z from '@deepseek-ai/schemastery'
 import { parseTranslationRequest, parseTranslationProjectionQuery, translationProjectionValue } from './translation-protocol.js'
 

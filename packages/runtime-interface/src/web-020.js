@@ -1,9 +1,13 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                           
-                                                                                                                                             
+// Public change history: docs/PUBLIC-CHANGES.md
 /** Official 0.2 Web representations terminate at this boundary. */
 export const WEB_020_RUNTIME_VERSION = '0.2.0-rc.2'
 export const WEB_021_RUNTIME_VERSION = '0.2.1-rc.2'
-export const isWebRuntimeVersion = version => version === WEB_020_RUNTIME_VERSION || version === WEB_021_RUNTIME_VERSION
+export const WEB_022_RUNTIME_VERSION = '0.2.2-rc.2'
+export const WEB_022_RC3_RUNTIME_VERSION = '0.2.2-rc.3'
+export const WEB_022_RC5_RUNTIME_VERSION = '0.2.2-rc.5'
+export const isWeb022RuntimeVersion = version => version === WEB_022_RUNTIME_VERSION || version === WEB_022_RC3_RUNTIME_VERSION || version === WEB_022_RC5_RUNTIME_VERSION
+export const isModernWebRuntimeVersion = version => version === WEB_021_RUNTIME_VERSION || isWeb022RuntimeVersion(version)
+export const isWebRuntimeVersion = version => version === WEB_020_RUNTIME_VERSION || isModernWebRuntimeVersion(version)
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value)
 const invalid = message => { throw Object.assign(new Error(message), { code: 'runtime-interface/invalid-stream' }) }
 
@@ -48,6 +52,14 @@ function queueInbox(items) {
   return { 'next-turn': items.filter(item => item.target !== 'next-step').map(item => item.message),
     'next-step': items.filter(item => item.target === 'next-step').map(item => item.message) }
 }
+/** One official event may change several projections; the stable Hub keeps keyed updates. */
+export function canonicalControlFrames(frame) {
+  if (frame?.type !== 'projection' || !Array.isArray(frame.changes)) return [canonicalControl(frame)]
+  return frame.changes.map(change => {
+    if (typeof change?.key !== 'string' || !Object.hasOwn(change, 'val')) invalid('Invalid control projection change')
+    return canonicalControl({ type: 'projection', sessionId: frame.sessionId, seq: frame.seq, key: change.key, value: change.val })
+  })
+}
 export function canonicalControl(frame) {
   if (frame?.type === 'projection' && frame.key === 'inbox') {
     return { type: 'queue', sessionId: frame.sessionId, items: inboxQueue(frame.value), seq: frame.seq }
@@ -63,7 +75,10 @@ export function canonicalControl(frame) {
   }
   return { ...frame, value: { ...frame.value, queues, jobs: frame.value.jobs ?? {} } }
 }
-export function browserControl(frame, targetV4 = true) {
+export function browserControl(frame, targetV4 = true, target022 = false) {
+  if (target022 && frame?.type === 'projection' && typeof frame.key === 'string') {
+    return { type: 'projection', sessionId: frame.sessionId, seq: frame.seq, changes: [{ key: frame.key, val: frame.value }] }
+  }
   if (targetV4 && frame?.type === 'baseline' && (record(frame.value?.projections) || record(frame.value?.queues))) {
     const projections = { ...frame.value?.projections }
     for (const [sessionId, items] of Object.entries(frame.value?.queues ?? {})) {
@@ -83,7 +98,7 @@ export function browserControl(frame, targetV4 = true) {
     }
     if (frame.seq === undefined) return targetV4 ? undefined : frame
     if (!Number.isSafeInteger(frame.seq) || frame.seq < 0 || Object.is(frame.seq, -0)) invalid('Invalid inbox projection sequence')
-    return { type: 'projection', sessionId: frame.sessionId, key: 'inbox', value: queueInbox(frame.items), seq: frame.seq }
+    return browserControl({ type: 'projection', sessionId: frame.sessionId, key: 'inbox', value: queueInbox(frame.items), seq: frame.seq }, targetV4, target022)
   }
   if (targetV4 && frame?.type === 'jobs') return undefined // supplied by job/list, not SessionManager
   return frame
@@ -102,10 +117,14 @@ export function applyControlQueue(state, frame) {
 
 /** Host identity mapping of newly touched official DTOs lives beside their codec. */
 export function scopeProjection(block, hostId, codec) {
-  if (!record(block?.values?.inbox)) return block
-  const inbox = block.values.inbox
+  const inbox = block?.values?.inbox
+  const members = block?.values?.subagentCatalog
+  if (!record(inbox) && !Array.isArray(members)) return block
   const map = messages => messages.map(message => ({ ...message, id: codec.encodeCompositeId(hostId, message.id) }))
-  return { ...block, values: { ...block.values, inbox: { 'next-turn': map(inbox['next-turn']), 'next-step': map(inbox['next-step']) } } }
+  return { ...block, values: { ...block.values,
+    ...(record(inbox) ? { inbox: { 'next-turn': map(inbox['next-turn']), 'next-step': map(inbox['next-step']) } } : {}),
+    ...(Array.isArray(members) ? { subagentCatalog: members.map(member => ({ ...member, id: codec.encodeCompositeId(hostId, member.id) })) } : {}),
+  } }
 }
 export function scopeJobFrame(frame, hostId, codec) {
   const map = job => ({ ...job, id: codec.encodeCompositeId(hostId, job.id),

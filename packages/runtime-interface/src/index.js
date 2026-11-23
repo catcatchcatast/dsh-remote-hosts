@@ -1,19 +1,16 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                
+// Public change history: docs/PUBLIC-CHANGES.md
 import { installParentPause } from './parent-pause.js'
-                                                                                                                                                           
+// Public change history: docs/PUBLIC-CHANGES.md
 import { createMobileDirectoryPort } from './mobile-directory.js'
 import { mobileContextHistoryEvent } from './mobile-history-context.js'
-                                                                                                                                               
-                                                                                                                                                     
-                                                                                                                                           
-                                                                                                                                               
+// Public change history: docs/PUBLIC-CHANGES.md
 import { randomUUID } from 'node:crypto'
 import { createCarrier } from './http-carrier.js'
-                                                                                                                                           
-import { createSubagentCatalogReader } from './subagent-catalog.js'
-                                                                                                                                 
+// Public change history: docs/PUBLIC-CHANGES.md
+import { createSubagentCatalogReader, adaptSubagents022 } from './subagent-catalog.js'
+// Public change history: docs/PUBLIC-CHANGES.md
 import { readFileSync } from 'node:fs'
-                                                                                                                                                 
+// Public change history: docs/PUBLIC-CHANGES.md
 import { createRequire } from 'node:module'
 import { adminCatalogRequest, adminCatalogResult } from './admin-catalog-wire.js'
 export { ADMIN_CATALOG_ENDPOINTS } from './admin-catalog-wire.js'
@@ -23,30 +20,27 @@ export { ThinkingTranslationConfig } from './translation-host.js'
 import z from '@deepseek-ai/schemastery'
 import { WORKSPACE_METHODS, WORKSPACE_FILE_ENDPOINTS, OFFICE_TO_PDF_ENDPOINTS, canonicalWorkspaceWire, browserWorkspaceWire, assertWorkspaceCapability } from './workspace-wire.js'
 export { WORKSPACE_FILE_ENDPOINTS, OFFICE_TO_PDF_ENDPOINTS, WORKSPACE_BINARY_ENDPOINTS, workspaceFileBytesRequest, workspaceIdentityReferences, mapWorkspaceRequest, scopeWorkspaceValue, scopeWorkspaceFrame } from './workspace-wire.js'
-                                                                                                                                             
-import { WEB_020_RUNTIME_VERSION, WEB_021_RUNTIME_VERSION, isWebRuntimeVersion, toolResultEvent, canonicalControl, browserControl, readLegacyProjections, legacyJobRows } from './web-020.js'
+// Public change history: docs/PUBLIC-CHANGES.md
+export { createWorkspaceFileReader, cachedWorkspaceResponse } from './workspace-file-reader.js'
+export { convertPreviewVideo, convertPreviewOffice } from './preview-conversion.js'
+// Public change history: docs/PUBLIC-CHANGES.md
+import { WEB_020_RUNTIME_VERSION, WEB_021_RUNTIME_VERSION, WEB_022_RUNTIME_VERSION, WEB_022_RC3_RUNTIME_VERSION, WEB_022_RC5_RUNTIME_VERSION, isWeb022RuntimeVersion, isModernWebRuntimeVersion, isWebRuntimeVersion, toolResultEvent, canonicalControl, canonicalControlFrames, browserControl, readLegacyProjections, legacyJobRows } from './web-020.js'
 export { WEB_020_RUNTIME_VERSION, scopeProjection, scopeJobFrame, createJobStreamEncoder, applyControlQueue } from './web-020.js'
-                                                                                                                                             
-                                                                                                                                             
-                                                                                                                                                   
+// Public change history: docs/PUBLIC-CHANGES.md
 import { createHostInteractionSource, createInteractionPeerClient, registerHostInteractionProtocol } from './host-interactions.js'
-                                                                                                                                                       
+// Public change history: docs/PUBLIC-CHANGES.md
 export { createHostInteractionSource, createInteractionPeerClient, isCoreInteractionFrame, interactionToBrowserFrame, decodeBrowserInteractionResult, INTERACTION_READ, INTERACTION_RESPOND } from './host-interactions.js'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createDiagnosticJournal } from './diagnostics.js'
 import { classifyStreamFailure, markStreamFailure, streamFailureDiagnosticCode } from './stream-failure.js'
-                                                                                                                                                                     
-                                                                                                                                     
-                                                                                                                                               
-                                                                                                                                                                         
-                                                                                                                                             
+// Public change history: docs/PUBLIC-CHANGES.md
 
 /** Official-runtime boundary for every rc1 compatibility package. */
 import { createAgentOperations } from './agent-operations.js'
-                                                                         
+// Public change history: docs/PUBLIC-CHANGES.md
 import { installUserOnlyGoals } from './user-only-goals.js'
-                                                                                                                                                 
+// Public change history: docs/PUBLIC-CHANGES.md
 import { mobileSubagentEvent } from './subagent-events.js'
 import { createSessionPersistencePort } from './session-persistence.js'
 import { createForkInboxIsolationPort } from './fork-inbox-isolation.js'
@@ -88,7 +82,7 @@ export {
   prepareSessionFollowRequest,
   sessionFollowAssistantStreamRequested,
 } from './browser-stream.js'
-                                                                                                                                                   
+// Public change history: docs/PUBLIC-CHANGES.md
 export {
   classifyStreamFailure,
   markStreamFailure,
@@ -109,11 +103,11 @@ export const HISTORY_EPOCH_CAPABILITY = 'history-epoch-v1'
 export const HISTORY_EPOCH_HEADER = 'x-dsh-history-epoch'
 export const LEGACY_HISTORY_EPOCH = 'legacy'
 
-const SUPPORTED_RUNTIME_VERSIONS = new Set([LEGACY_RUNTIME_VERSION, CURRENT_RUNTIME_VERSION, WEB_020_RUNTIME_VERSION, WEB_021_RUNTIME_VERSION])
-const SESSION_METHODS = Object.freeze(['attachment', 'cancel', 'canOpenWorkspacePath', 'control', 'create', 'follow', 'fork', 'list', 'modelCatalog', 'page', 'prompt', 'rename', 'search', 'selectModel', 'updateQueue', 'projections'])
+const SUPPORTED_RUNTIME_VERSIONS = new Set([LEGACY_RUNTIME_VERSION, CURRENT_RUNTIME_VERSION, WEB_020_RUNTIME_VERSION, WEB_021_RUNTIME_VERSION, WEB_022_RUNTIME_VERSION, WEB_022_RC3_RUNTIME_VERSION, WEB_022_RC5_RUNTIME_VERSION])
+const SESSION_METHODS = Object.freeze(['attachment', 'cancel', 'canOpenWorkspacePath', 'control', 'create', 'follow', 'fork', 'list', 'modelCatalog', 'page', 'events', 'prompt', 'rename', 'search', 'selectModel', 'updateQueue', 'projections'])
 const CONNECTION_METHODS = Object.freeze(['authenticatedUrl', 'requestRejection'])
 const SUBAGENT_METHODS = Object.freeze(['remoteExportList', 'prompt', 'interruptByParent'])
-const HISTORY_ENDPOINTS = new Set(['session/page', 'session/follow'])
+const HISTORY_ENDPOINTS = new Set(['session/page', 'session/events', 'session/follow'])
 const LEGACY_EVENT_RENAMES = Object.freeze({ 'tool/code-dispatch-start': 'tool/ptc-dispatch-start', 'tool/code-dispatch': 'tool/ptc-dispatch' })
 const CURRENT_TO_LEGACY_EVENT_RENAMES = Object.freeze(Object.fromEntries(Object.entries(LEGACY_EVENT_RENAMES).map(([legacy, current]) => [current, legacy])))
 const DEFAULT_RUNTIME_CONFIG = Object.freeze({ upstreamVersion: LEGACY_RUNTIME_VERSION })
@@ -477,7 +471,7 @@ function browserEvent(event, target) {
 export function canonicalToBrowserWire(value, targetVersion = CURRENT_RUNTIME_VERSION) {
   const target = normalizeRuntimeVersion(targetVersion)
   value = browserWorkspaceWire(value, target)
-  if (['baseline', 'queue', 'jobs'].includes(value?.type)) value = browserControl(value, isWebRuntimeVersion(target))
+  if (['baseline', 'queue', 'jobs', 'projection'].includes(value?.type)) value = browserControl(value, isWebRuntimeVersion(target), isWeb022RuntimeVersion(target))
   if (Array.isArray(value)) return Object.freeze(value.map(item => canonicalToBrowserWire(item, target)))
   if (!isRecord(value)) return value
   if (value.type === 'assistant-stream') {
@@ -660,8 +654,7 @@ export async function readHostRuntimeVersion(carrier, signal) {
   try { return normalizeRuntimeVersion(result.value.version) }
   catch { return undefined }
 }
-
-                                                                                          
+// Public change history: docs/PUBLIC-CHANGES.md
 function versionAwareHostCarrier(options) {
   const { carrier, versionSignal } = options
   const fixedOptions = { ...options, versionSignal: undefined }
@@ -767,10 +760,10 @@ export function wrapHostCarrier({ hostId, carrier, upstreamVersion = LEGACY_RUNT
         source = !isWebRuntimeVersion(version) && endpoint === 'job/list' ? legacyJobRows(carrier, request?.args?.request, signal) : await carrier.open(endpoint, request, signal)
         if (!assistantStream) {
           for await (const value of source) {
-            const mapped = mapResult(endpoint, value, state)
+            const mapped = endpoint === 'session/control' ? canonicalControlFrames(value).map(frame => mapResult(endpoint, frame, state)) : [mapResult(endpoint, value, state)]
             trace.observe(value)
             stage = 'live'
-            yield mapped
+            yield* mapped
           }
           return
         }
@@ -870,7 +863,7 @@ function withoutCachedListWatermarks(result, version) {
   if (!Array.isArray(result?.items)) return result
   return { ...result, items: result.items.map(item => {
     const kind = item.projections?.kind
-    const unsequenced = kind === 'cached' || kind === 'migration-required' || (version === WEB_021_RUNTIME_VERSION && kind !== 'sequenced')
+    const unsequenced = kind === 'cached' || kind === 'migration-required' || (isModernWebRuntimeVersion(version) && kind !== 'sequenced')
     if (!isRecord(item.projections) || !unsequenced) return item
     const { asOfSeq: _cacheWatermark, ...projections } = item.projections
     return { ...item, projections }
@@ -919,7 +912,7 @@ function canonicalSessionPort(service, version, hostId, mobileAssistant, session
       }, () => streamEncoder.close())
     }
     if (method === 'control') {
-      return mapReturnedStream(value, frame => upstreamToCanonicalWire(canonicalControl(frame), { hostId, upstreamVersion: version, endpoint, adapter }))
+      return mapSessionFollowStream(value, frame => canonicalControlFrames(frame).map(item => upstreamToCanonicalWire(item, { hostId, upstreamVersion: version, endpoint, adapter })))
     }
     return mapReturnedValue(value, result => {
       // 缓存投影的水位只属于缓存记录；移动端仍通过原首帧回退建立实时游标。
@@ -1009,7 +1002,7 @@ function canonicalEventSource(source, version, hostId, mobileAssistant, historyM
         }
         if (eventName === 'session/created') {
           const session = args[0], ref = identity(session)
-          const firstLiveSeq = version === WEB_021_RUNTIME_VERSION ? session?.firstLifecycleSeq : session?.firstLiveSeq
+          const firstLiveSeq = isModernWebRuntimeVersion(version) ? session?.firstLifecycleSeq : session?.firstLiveSeq
           if (!Number.isSafeInteger(firstLiveSeq) || firstLiveSeq < 0 || typeof session?.snapshotEvents !== 'function') {
             return listener(Object.freeze({ ...ref, events: [] }))
           }
@@ -1145,9 +1138,15 @@ export class RuntimeInterface {
     }])))
     this.workspace = canonicalWorkspacePort(workspaceController, this.#version, this.#hostId)
     this.sessionPersistence = createSessionPersistencePort({ service: sessionPersistence, ErrorType: RuntimeInterfaceError })
-    this.connection = createPort(connection, CONNECTION_METHODS, 'connection')
-    this.hostInteractions = createHostInteractionSource(typertGateway, { upstreamVersion: this.#version, peer: this.#version === WEB_021_RUNTIME_VERSION ? connection.browserPeer : undefined, sendResult: async (endpoint, payload, signal, peer) => {
-      if (this.#version === WEB_021_RUNTIME_VERSION) {
+    this.connection = Object.freeze({
+      ...createPort(connection, CONNECTION_METHODS, 'connection'),
+      ownerRequestRejection(request) {
+        const admission = connection.admit(request)
+        return 'rejection' in admission ? admission.rejection : admission.peer.principal.kind === 'owner' ? undefined : 403
+      },
+    })
+    this.hostInteractions = createHostInteractionSource(typertGateway, { upstreamVersion: this.#version, peer: isModernWebRuntimeVersion(this.#version) ? connection.browserPeer : undefined, sendResult: async (endpoint, payload, signal, peer) => {
+      if (isModernWebRuntimeVersion(this.#version)) {
         const rpcId = randomUUID()
         const handler = connection.createSharedFetchHandler('/api')
         const response = await handler.fetch(new Request(`http://127.0.0.1/api/${endpoint}`, {
@@ -1164,9 +1163,10 @@ export class RuntimeInterface {
       return carrier.call(endpoint, payload, lifetime)
     } })
     this.#registerHostInteractions = state => registerHostInteractionProtocol({ webServer, connection: this.connection, state, send: this.hostInteractions.respond })
-    const subagentPort = createPort(subagents ?? {}, SUBAGENT_METHODS, 'subagents', (_method, value) => mapReturnedValue(value, result => upstreamToCanonicalWire(result, { hostId: this.#hostId, upstreamVersion: this.#version, endpoint: 'subagents/list' })))
-    this.subagents = isWebRuntimeVersion(this.#version) && typeof subagents?.remoteExportList !== 'function' && typeof subagents?.listChildren === 'function'
-      ? Object.freeze({ ...subagentPort, remoteExportList: createSubagentCatalogReader(subagents, subagentAgents, RuntimeInterfaceError) })
+    const stableSubagents = isWeb022RuntimeVersion(this.#version) ? adaptSubagents022(subagents, this.session, RuntimeInterfaceError) : subagents
+    const subagentPort = createPort(stableSubagents ?? {}, SUBAGENT_METHODS, 'subagents', (_method, value) => mapReturnedValue(value, result => upstreamToCanonicalWire(result, { hostId: this.#hostId, upstreamVersion: this.#version, endpoint: 'subagents/list' })))
+    this.subagents = isWebRuntimeVersion(this.#version) && typeof stableSubagents?.remoteExportList !== 'function' && typeof stableSubagents?.listChildren === 'function'
+      ? Object.freeze({ ...subagentPort, remoteExportList: createSubagentCatalogReader(stableSubagents, subagentAgents, RuntimeInterfaceError) })
       : subagentPort
     this.#localBootstrapEndpoint = createLocalBootstrapEndpoint({ webServer, connection: this.connection })
     this.localRuntime = localRuntime ?? createLocalRuntimeRestart({ descriptor: localRuntimeDescriptor, appExit, webServer })
@@ -1220,8 +1220,8 @@ export async function apply(ctx, options = {}) {
   const config = resolveInstalledRuntimeConfig(options)
   bindInstalledRuntimeConfigPersistence(ctx, config)
   ctx.inject(['tools', 'agents'], scope => scope.effect(() => installUserOnlyGoals(scope), 'runtime-interface: user-only goal creation'))
-  if (config.upstreamVersion === WEB_021_RUNTIME_VERSION) ctx.inject(['agents', 'sessionProjections'], scope => scope.effect(() => installParentPause(scope), 'runtime-interface: human subtree pause'))
-                                                                                                                                                     
+  if (isModernWebRuntimeVersion(config.upstreamVersion)) ctx.inject(['agents', 'sessionProjections'], scope => scope.effect(() => installParentPause(scope, { upstreamVersion: config.upstreamVersion }), 'runtime-interface: human subtree pause'))
+// Public change history: docs/PUBLIC-CHANGES.md
   // Keep the file-upload adapter lazy: older runtime-interface consumers do
   // not load Host-only filesystem and credential peers just by importing the
   // package. The stable service appears only when the official capabilities
@@ -1239,7 +1239,7 @@ export async function apply(ctx, options = {}) {
     })
   })
   let hostServices, defaultModelServices, directoryServices
-                                                                                   
+// Public change history: docs/PUBLIC-CHANGES.md
   ctx.inject(['agents'], bound => {
     hostServices = bound
     return () => { if (hostServices === bound) hostServices = undefined }

@@ -1,10 +1,11 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                             
+// Public change history: docs/PUBLIC-CHANGES.md
 const CONNECTION_PREFIX = 'HOST_CONNECTION_FAILED_'
 const PUBLIC_CODES = new Set([
   'HOST_ID_INVALID',
   'HOST_ALIAS_INVALID',
   'HOST_PORT_INVALID',
   'HOST_LAUNCH_INVALID',
+  'HOST_RUNTIME_INVALID',
   'DUPLICATE_HOST_TARGET',
   'HOST_NOT_FOUND',
   'HOST_LOCAL_READONLY',
@@ -73,6 +74,7 @@ export function publicHost(record) {
     lastError: record.lastError ?? null,
     localPort: record.localPort,
     remotePort: record.remotePort,
+    ...(record.runtime === undefined ? {} : { runtime: record.runtime }),
     launch: record.launch === 'systemd-user' ? 'systemd-user' : 'none',
     enabled: record.enabled !== false,
     restartAvailable: record.launch === 'systemd-user',

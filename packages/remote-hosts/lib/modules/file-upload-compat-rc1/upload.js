@@ -1,5 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                               
-                                                                                                                                                   
+// Public change history: docs/PUBLIC-CHANGES.md
 // Upload HTTP surface.
 //
 // The v2 surface is deliberately a small, client-neutral resumable protocol:
@@ -8,7 +7,7 @@
 // session's `.dsh-uploads/<sessionId>` directory. The old POST/DELETE
 // `/api/upload` surface remains available for older clients, but it also uses
 // a temporary file and never buffers a complete upload in memory.
-                                                                                                                                                   
+// Public change history: docs/PUBLIC-CHANGES.md
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { mkdir, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';

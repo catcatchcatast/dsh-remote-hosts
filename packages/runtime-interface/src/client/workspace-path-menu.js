@@ -1,4 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                    
+// Public change history: docs/PUBLIC-CHANGES.md
 import { createElement, useSyncExternalStore } from 'react'
 import { MenuItemButton, IconCopyOutlineRegular, IconFolderOpenRegular, Toast, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'

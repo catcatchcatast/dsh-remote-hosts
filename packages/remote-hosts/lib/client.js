@@ -17,9 +17,551 @@ window.__ModuleLoader__.load({
 		};
 		//#endregion
 		let react = require("react");
-		let react_jsx_runtime = require("react/jsx-runtime");
 		let _deepseek_ai_dsh_client_ui_primitives = require("@deepseek-ai/dsh-client-ui-primitives");
 		let _deepseek_ai_dsh_client_store = require("@deepseek-ai/dsh-client-store");
+		let react_jsx_runtime = require("react/jsx-runtime");
+		//#region src/workspace-add.js
+		const NS$4 = "remote-hosts.workspace-add";
+		const holes = ["conversation.hero.workspace.directoryFlow", "sidebar.workspaces.directoryFlow"];
+		const adapters$1 = /* @__PURE__ */ new WeakMap();
+		const dictionaries = {
+			zh: {
+				title: "选择电脑",
+				host: "电脑",
+				next: "浏览目录",
+				cancel: "取消",
+				unavailable: "所选电脑不可用，请重新选择。"
+			},
+			en: {
+				title: "Select computer",
+				host: "Computer",
+				next: "Browse directories",
+				cancel: "Cancel",
+				unavailable: "The selected computer is unavailable. Please choose again."
+			}
+		};
+		function hostRows(bridge) {
+			const rows = bridge?.getHosts?.();
+			return Array.isArray(rows) ? rows.filter((row) => typeof row.hostId === "string" && row.hostId && typeof row.label === "string") : [];
+		}
+		/** Host路由跟随原owner的open/busy；onPicked是void，不能用其返回值作为释放时点。 */
+		function hostFlow(original, t, getBridge) {
+			return function HostDirectoryFlow(props) {
+				const bridge = getBridge();
+				const available = bridge && [
+					"getHosts",
+					"getSelectedHost",
+					"setSelectedHost"
+				].every((key) => typeof bridge[key] === "function") && typeof props.listDirectory === "function" && typeof props.createDirectory === "function";
+				const [host, setHost] = (0, react.useState)(() => bridge?.getSelectedHost?.() ?? "local");
+				const [browsing, setBrowsing] = (0, react.useState)(false);
+				const [error, setError] = (0, react.useState)("");
+				const lease = (0, react.useRef)(null);
+				const pending = (0, react.useRef)(false);
+				const owner = (0, react.useRef)(props);
+				owner.current = props;
+				const release = () => {
+					const current = lease.current;
+					lease.current = null;
+					pending.current = false;
+					if (current && bridge.getSelectedHost() === current.hostId) bridge.setSelectedHost(current.before);
+				};
+				(0, react.useEffect)(() => {
+					if (!props.open && !props.busy) {
+						release();
+						setBrowsing(false);
+						setError("");
+					}
+				}, [props.open, props.busy]);
+				(0, react.useEffect)(() => () => release(), []);
+				(0, react.useEffect)(() => {
+					if (!props.open && !props.busy) return;
+					return bridge?.onSelectedHost?.((value) => {
+						if (!lease.current || value === lease.current.hostId || owner.current.busy || pending.current) return;
+						lease.current = null;
+						setBrowsing(false);
+						setHost(value ?? "local");
+					});
+				}, [
+					bridge,
+					props.open,
+					props.busy
+				]);
+				const callbacks = (0, react.useMemo)(() => {
+					const requireRoute = () => {
+						if (!lease.current || bridge.getSelectedHost() !== lease.current.hostId || !hostRows(bridge).some((row) => row.hostId === lease.current.hostId)) throw new Error(t("unavailable"));
+					};
+					return {
+						listDirectory(path, signal) {
+							requireRoute();
+							return owner.current.listDirectory(path, signal);
+						},
+						createDirectory(path, name) {
+							requireRoute();
+							return owner.current.createDirectory(path, name);
+						},
+						onPicked(path) {
+							if (pending.current || owner.current.busy) return;
+							try {
+								requireRoute();
+							} catch (reason) {
+								owner.current.onError?.(reason.message);
+								return;
+							}
+							pending.current = true;
+							owner.current.onPicked(path);
+						}
+					};
+				}, [bridge]);
+				(0, react.useEffect)(() => {
+					if (!available && props.open) if (owner.current.onError) owner.current.onError(t("unavailable"));
+					else owner.current.onCancel();
+				}, [available, props.open]);
+				if (!available) return null;
+				const browse = () => {
+					try {
+						if (!hostRows(bridge).some((row) => row.hostId === host)) throw new Error(t("unavailable"));
+						lease.current = {
+							hostId: host,
+							before: bridge.getSelectedHost()
+						};
+						bridge.setSelectedHost(host);
+						setError("");
+						setBrowsing(true);
+					} catch {
+						release();
+						setError(t("unavailable"));
+					}
+				};
+				if (!props.open && !props.busy) return null;
+				if (browsing) return (0, react.createElement)(original, {
+					...props,
+					...callbacks
+				});
+				return (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Modal, {
+					open: props.open,
+					title: t("title"),
+					onClose: props.busy ? () => {} : props.onCancel,
+					footer: (0, react.createElement)("div", { style: {
+						display: "flex",
+						gap: 8
+					} }, (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+						variant: "outline",
+						disabled: props.busy,
+						onClick: props.onCancel
+					}, t("cancel")), (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+						variant: "primary",
+						disabled: props.busy,
+						onClick: browse
+					}, t("next")))
+				}, (0, react.createElement)("label", null, t("host"), (0, react.createElement)("select", {
+					"aria-label": t("host"),
+					value: host,
+					disabled: props.busy,
+					onChange: (event) => setHost(event.target.value),
+					style: { width: "100%" }
+				}, hostRows(bridge).map((row) => (0, react.createElement)("option", {
+					key: row.hostId,
+					value: row.hostId
+				}, row.label)))), error ? (0, react.createElement)("p", { role: "alert" }, error) : null);
+			};
+		}
+		function wrap(entry, t, getBridge) {
+			const existing = adapters$1.get(entry);
+			if (existing && entry.component === existing.original) return existing.mount();
+			if (existing && entry.component === existing.wrapper) return () => {};
+			const original = entry.component;
+			const mounted = /* @__PURE__ */ new Set();
+			let active = true;
+			const Flow = hostFlow(original, t, getBridge);
+			function Wrapper(props) {
+				const [enabled, setEnabled] = (0, react.useState)(active);
+				(0, react.useEffect)(() => {
+					mounted.add(setEnabled);
+					setEnabled(active);
+					return () => mounted.delete(setEnabled);
+				}, []);
+				return (0, react.createElement)(enabled ? Flow : original, props);
+			}
+			const mount = () => {
+				active = true;
+				entry.component = Wrapper;
+				for (const update of mounted) update(true);
+				return () => {
+					active = false;
+					for (const update of mounted) update(false);
+					if (entry.component === Wrapper) entry.component = original;
+				};
+			};
+			adapters$1.set(entry, {
+				original,
+				wrapper: Wrapper,
+				mount
+			});
+			return mount();
+		}
+		function installWorkspaceAdd(ctx, getBridge = () => globalThis.__DSH_BROWSER_HOST_HUB__) {
+			ctx.effect(() => {
+				const stopLocale = ctx.locale.register(NS$4, dictionaries);
+				const t = ctx.locale.bind(NS$4), installed = /* @__PURE__ */ new Map();
+				const reconcile = () => {
+					const live = new Set(holes.flatMap((key) => [...ctx.slots.entries(key)]));
+					for (const [entry, dispose] of installed) if (!live.has(entry)) {
+						dispose();
+						installed.delete(entry);
+					}
+					for (const entry of live) if (typeof entry.component === "function" && !installed.has(entry)) installed.set(entry, wrap(entry, t, getBridge));
+				};
+				const stop = ctx.on("slots/changed", (key) => {
+					if (holes.includes(key)) reconcile();
+				});
+				reconcile();
+				return () => {
+					stop();
+					for (const dispose of installed.values()) dispose();
+					installed.clear();
+					stopLocale();
+				};
+			}, "remote-hosts: official workspace add Host selection");
+		}
+		//#endregion
+		//#region src/prepare-preview.js
+		async function preparePreview(request, signal) {
+			const response = await fetch("/api/remote-hosts/file-preview", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					...request,
+					streamResponse: location.protocol === "dsh-app:"
+				}),
+				signal
+			});
+			if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`);
+			const entry = await response.json();
+			if (typeof entry.error === "string") throw new Error(entry.error);
+			return entry;
+		}
+		//#endregion
+		//#region src/media-preview.js
+		const id$1 = "dsh-remote-hosts/media";
+		const audio = [
+			"mp3",
+			"wav",
+			"ogg",
+			"oga",
+			"m4a",
+			"flac",
+			"aac"
+		];
+		const video = [
+			"mp4",
+			"m4v",
+			"webm",
+			"ogv",
+			"mkv"
+		];
+		const endpoint = "/api/remote-hosts/file-preview";
+		function MediaPreview({ resourceAddress, useResource, content }) {
+			const resource = useResource(resourceAddress);
+			const source = resource.value;
+			const [view, setView] = (0, react.useState)({});
+			const [transcode, setTranscode] = (0, react.useState)(false);
+			const player = (0, react.useRef)(null);
+			const errorProbe = (0, react.useRef)(null);
+			const resume = (0, react.useRef)(null);
+			const bindPlayer = (0, react.useCallback)((node) => {
+				if (player.current && player.current !== node) {
+					errorProbe.current?.abort();
+					errorProbe.current = null;
+					player.current.pause();
+					player.current.removeAttribute("src");
+					player.current.load();
+				}
+				player.current = node;
+			}, []);
+			const revision = content.kind === "renderer" ? content.revision : void 0;
+			const prepareAgain = () => {
+				if (player.current) resume.current = {
+					time: player.current.currentTime,
+					playing: !player.current.paused
+				};
+				content.reload();
+			};
+			(0, react.useEffect)(() => {
+				if (!view.url) return;
+				const controller = new AbortController();
+				const timer = setInterval(() => {
+					fetch(view.url, {
+						method: "HEAD",
+						signal: controller.signal
+					}).then((response) => {
+						if (!controller.signal.aborted && response.status === 404) prepareAgain();
+					}).catch(() => {});
+				}, 1440 * 60 * 1e3);
+				return () => {
+					clearInterval(timer);
+					controller.abort();
+				};
+			}, [view.url, content.reload]);
+			(0, react.useEffect)(() => {
+				if (revision === void 0 || !source?.absolutePath || resource.status !== "live") return;
+				const controller = new AbortController();
+				setView({});
+				preparePreview({
+					sessionId: decodeURIComponent(new URL(resourceAddress).pathname.split("/")[2]),
+					path: source.absolutePath,
+					transcode
+				}, controller.signal).then((cached) => {
+					if (!controller.signal.aborted) setView({
+						url: location.protocol === "dsh-app:" ? cached.mediaUrl : `${endpoint}/${cached.id}`,
+						version: cached.version,
+						conversion: cached.conversion
+					});
+				}).catch((error) => {
+					if (!controller.signal.aborted) {
+						setView({ error: error.message });
+						content.failed();
+					}
+				});
+				return () => {
+					controller.abort();
+				};
+			}, [
+				resourceAddress,
+				source?.absolutePath,
+				source?.version,
+				resource.status,
+				revision,
+				transcode
+			]);
+			if (view.error) return (0, react.createElement)("p", { role: "alert" }, view.error);
+			if (!view.url) return (0, react.createElement)("p", { role: "status" }, "正在准备媒体预览…");
+			const tag = audio.includes(source.absolutePath.split(".").at(-1).toLowerCase()) ? "audio" : "video";
+			const failed = () => {
+				setView({ error: "媒体无法播放，请检查文件是否完整、编码是否受浏览器支持。" });
+				content.failed();
+			};
+			return (0, react.createElement)(tag, {
+				ref: bindPlayer,
+				src: view.url,
+				controls: true,
+				preload: "metadata",
+				style: {
+					width: "100%",
+					height: tag === "video" ? "100%" : void 0,
+					maxHeight: "100%"
+				},
+				onLoadedMetadata: () => {
+					content.loaded(view.version);
+					if (resume.current) {
+						player.current.currentTime = Math.min(resume.current.time, player.current.duration);
+						if (resume.current.playing) player.current.play().catch(() => {});
+						resume.current = null;
+					}
+				},
+				onError: (event) => {
+					if (view.conversion === "remux" && !transcode) {
+						setTranscode(true);
+						return;
+					}
+					const node = event.currentTarget;
+					errorProbe.current ??= new AbortController();
+					fetch(view.url, {
+						method: "HEAD",
+						signal: errorProbe.current.signal
+					}).then((response) => {
+						if (player.current !== node) return;
+						if (response.status === 404) prepareAgain();
+						else failed();
+					}).catch(() => {
+						if (player.current === node) failed();
+					});
+				}
+			});
+		}
+		function installMediaPreview(ctx) {
+			ctx.effect(() => ctx.documentPreviews.register({
+				id: id$1,
+				extensions: [...audio, ...video],
+				binaryExtensions: [...audio, ...video],
+				title: () => "媒体",
+				loading: "renderer",
+				wrap: false
+			}));
+			ctx.effect(() => ctx.slots.inject("sidebar.right.tab.document", () => ctx.slots.register({
+				name: "sidebar.right.tab.document",
+				key: id$1
+			}, MediaPreview)));
+		}
+		//#endregion
+		//#region src/html-preview.js
+		const id = "dsh-remote-hosts/html-stream";
+		function HtmlPreview({ resourceAddress, useResource, useInteractivePreview, content }) {
+			const resource = useResource(resourceAddress), source = resource.value;
+			const interactive = useInteractivePreview((value) => value);
+			const [view, setView] = (0, react.useState)({});
+			(0, react.useEffect)(() => {
+				if (!view.url) return;
+				const controller = new AbortController();
+				const timer = setInterval(() => {
+					fetch(view.url, {
+						method: "HEAD",
+						signal: controller.signal
+					}).then((response) => {
+						if (!controller.signal.aborted && response.status === 404) content.reload();
+					}).catch(() => {});
+				}, 1440 * 60 * 1e3);
+				return () => {
+					clearInterval(timer);
+					controller.abort();
+				};
+			}, [view.url, content.reload]);
+			(0, react.useEffect)(() => {
+				if (!source?.absolutePath || resource.status !== "live") return;
+				const controller = new AbortController();
+				const sessionId = decodeURIComponent(new URL(resourceAddress).pathname.split("/")[2]);
+				setView({});
+				preparePreview({
+					sessionId,
+					path: source.absolutePath
+				}, controller.signal).then((entry) => {
+					if (!controller.signal.aborted) setView({
+						url: entry.htmlUrl,
+						version: entry.version
+					});
+				}).catch((error) => {
+					if (!controller.signal.aborted) {
+						setView({ error: error.message });
+						content.failed();
+					}
+				});
+				return () => controller.abort();
+			}, [
+				resourceAddress,
+				source?.absolutePath,
+				source?.version,
+				resource.status,
+				content.revision
+			]);
+			if (view.error) return (0, react.createElement)("p", { role: "alert" }, view.error);
+			if (!view.url) return (0, react.createElement)("p", { role: "status" }, "正在准备 HTML 预览…");
+			return (0, react.createElement)("iframe", {
+				key: view.url + interactive,
+				src: view.url,
+				sandbox: interactive ? "allow-scripts" : "",
+				title: "HTML 文档预览",
+				"data-html-preview": true,
+				style: {
+					width: "100%",
+					height: "100%",
+					border: 0
+				},
+				onLoad: () => content.loaded(view.version),
+				onError: () => content.failed()
+			});
+		}
+		function installHtmlPreview(ctx) {
+			ctx.effect(() => ctx.documentPreviews.register({
+				id,
+				extensions: ["html", "htm"],
+				priority: "extension",
+				title: () => "HTML",
+				loading: "renderer",
+				wrap: false
+			}));
+			ctx.effect(() => ctx.slots.inject("sidebar.right.tab.document", () => ctx.slots.register({
+				name: "sidebar.right.tab.document",
+				key: id,
+				inject: () => ({ hooks: { interactivePreview: ctx.configForms.developerTools.enabled } })
+			}, HtmlPreview)));
+		}
+		//#endregion
+		//#region src/file-tab-menu.js
+		const NS$3 = "remote-hosts.file-tab-menu";
+		function fileTabSession(tab) {
+			const match = /^dsh-resource:\/\/file\/session\/([^/]+)\//.exec(tab.contentId);
+			if (!match) return;
+			try {
+				return decodeURIComponent(match[1]);
+			} catch {
+				return;
+			}
+		}
+		function installFileTabMenu(ctx) {
+			const notice = (0, _deepseek_ai_dsh_client_store.createSnapshotStore)(null), lifetime = new AbortController();
+			ctx.effect(() => () => {
+				lifetime.abort();
+				notice.set(null);
+			});
+			ctx.effect(() => ctx.locale.register(NS$3, {
+				zh: {
+					reveal: "打开所在文件夹",
+					open: "用默认方式打开",
+					failed: "文件打开失败"
+				},
+				en: {
+					reveal: "Open containing folder",
+					open: "Open with default application",
+					failed: "Could not open file"
+				}
+			}));
+			ctx.slots.inject("shell.overlay", () => ctx.slots.register({
+				name: "shell.overlay",
+				id: "file-tab-open-error",
+				locale: NS$3
+			}, ({ t }) => {
+				const value = (0, react.useSyncExternalStore)(notice.subscribe, notice.getSnapshot);
+				return value ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Toast, {
+					key: value,
+					text: t("failed"),
+					onDone: () => notice.set(null)
+				}) : null;
+			}));
+			function FileItem({ tab, dismiss, t, action, sessionId }) {
+				const source = ctx.get("resources").source(tab.contentId);
+				const resource = (0, react.useSyncExternalStore)(source.subscribe, source.getSnapshot);
+				return (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.MenuItemButton, {
+					disabled: resource.status !== "live",
+					icon: (0, react.createElement)(action === "reveal" ? _deepseek_ai_dsh_client_ui_primitives.IconFolderOpenOutlineRegular : _deepseek_ai_dsh_client_ui_primitives.IconRightUpOutlineRegular),
+					onSelect() {
+						dismiss();
+						fetch("/api/remote-hosts/file-preview", {
+							method: "POST",
+							headers: { "content-type": "application/json" },
+							body: JSON.stringify({
+								sessionId,
+								path: resource.value.absolutePath,
+								action
+							}),
+							signal: lifetime.signal
+						}).then(async (response) => {
+							if (!response.ok || !(await response.json()).opened) throw new Error("File open failed");
+						}).catch(() => {
+							if (!lifetime.signal.aborted) notice.set(Date.now());
+						});
+					}
+				}, t(action));
+			}
+			ctx.slots.inject("sidebar.right.tab.menu.item", () => {
+				const stops = ["reveal", "open"].map((action, index) => ctx.slots.register({
+					name: "sidebar.right.tab.menu.item",
+					id: "remote-file-" + action,
+					order: 100 + index,
+					locale: NS$3
+				}, (props) => {
+					const sessionId = fileTabSession(props.tab);
+					return sessionId ? (0, react.createElement)(FileItem, {
+						...props,
+						action,
+						sessionId
+					}) : null;
+				}));
+				return () => {
+					for (const stop of stops) stop();
+				};
+			});
+		}
+		//#endregion
 		//#region src/third_party/composer-history/recall.ts
 		const DEFAULT_EXTRACT = {
 			kinds: ["user"],
@@ -526,7 +1068,7 @@ window.__ModuleLoader__.load({
 							" · 127.0.0.1:",
 							host.localPort,
 							" → 127.0.0.1:",
-							host.remotePort,
+							host.remotePort ?? "—",
 							" · ",
 							host.launch
 						]
@@ -694,7 +1236,7 @@ window.__ModuleLoader__.load({
 					alias: host.alias,
 					label: host.label,
 					localPort: host.localPort,
-					remotePort: host.remotePort,
+					remotePort: host.remotePort ?? 3080,
 					launch: host.launch,
 					enabled: host.enabled
 				});
@@ -1159,6 +1701,7 @@ window.__ModuleLoader__.load({
 				rules.push(selector() + "::before{margin-inline-end:4px;align-self:center;}");
 				rules.push(selector() + " > span[class$=\"_time\"]{order:3;}");
 				rules.push(selector() + ":not(" + selector("local") + ") > span[class$=\"_time\"]{min-inline-size:4em;text-align:right;}");
+				rules.push(selector() + ":not(" + selector("local") + ") > span[class$=\"_rowResting\"]{order:3;min-inline-size:40px;justify-content:flex-end;}");
 				rules.push(selector() + " > span[class$=\"_pinIndicator\"]{order:4;}");
 				rules.push(selector() + " > span[class$=\"_rowActions\"]{order:5;}");
 			}
@@ -1699,6 +2242,35 @@ window.__ModuleLoader__.load({
 		//#region src/client.js
 		const inject = [];
 		function apply(ctx) {
+			ctx.inject([
+				"slots",
+				"locale",
+				"resources"
+			], (scope) => installFileTabMenu(scope));
+			ctx.inject(["slots", "documentPreviews"], (scope) => installMediaPreview(scope));
+			ctx.inject([
+				"slots",
+				"documentPreviews",
+				"configForms"
+			], (scope) => installHtmlPreview(scope));
+			ctx.inject(["remote"], (scope) => {
+				const bridge = globalThis.__DSH_BROWSER_HOST_HUB__;
+				const streams = scope.get("remote").streams;
+				if (!bridge) return;
+				const open = (endpoint, payload, signal) => {
+					streams.start();
+					return streams.open(endpoint, payload, signal);
+				};
+				scope.effect(() => {
+					bridge.openLocalAccountStream = open;
+					return () => {
+						if (bridge.openLocalAccountStream === open) delete bridge.openLocalAccountStream;
+					};
+				}, "remote-hosts: official local account streams");
+			});
+			ctx.inject(["slots", "locale"], (scope) => {
+				installWorkspaceAdd(scope);
+			});
 			ctx.inject([
 				"slots",
 				"locale",

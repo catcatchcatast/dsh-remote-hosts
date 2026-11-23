@@ -674,7 +674,9 @@ window.__ModuleLoader__.load({
 			})];
 			for (const event of [
 				"llm/adapters-updated",
+				"llm/models-updated",
 				"settings/document-updated",
+				"credentials/record-updated",
 				"credentials/reference-updated"
 			]) stops.push(ctx.remote.$on(event, refresh));
 			return () => {
@@ -687,6 +689,31 @@ window.__ModuleLoader__.load({
 		}
 		//#endregion
 		//#region src/client/agent-presets.js
+		const STANDARD_MODES = ["standard-depth-1", "standard-progress"];
+		const CHILD_MODES = new Set(STANDARD_MODES.flatMap((id) => [`${id}-routed-child`, `${id}-sol-implement`]));
+		function presetChoices(rows, current, preferred) {
+			const parents = rows.filter((row) => STANDARD_MODES.includes(row.id) && !row.broken);
+			if (!parents.length) return rows;
+			const standard = parents.find((row) => row.id === current) ?? parents.find((row) => row.id === preferred) ?? parents.find((row) => row.isDefault) ?? parents[0];
+			return rows.filter((row) => row.id === current || !CHILD_MODES.has(row.id) && row.id !== "standard-original" && !(row.id === "standard" && row.name) && (!STANDARD_MODES.includes(row.id) || row === standard));
+		}
+		function presetMenuStore(store, defaultId) {
+			let previous, previousDefault, projected;
+			return {
+				subscribe: (listener) => store.subscribe(listener),
+				getSnapshot() {
+					const state = store.getSnapshot(), preferred = defaultId();
+					if (state === previous && preferred === previousDefault) return projected;
+					previous = state;
+					previousDefault = preferred;
+					projected = {
+						...state,
+						options: presetChoices(state.options, state.current, preferred)
+					};
+					return projected;
+				}
+			};
+		}
 		const HERO = "conversation.hero.agentPreset";
 		const refusal = (code) => ({
 			ok: false,
@@ -736,6 +763,13 @@ window.__ModuleLoader__.load({
 						return response;
 					});
 				}
+				if (method === "agentPresets/list") return Promise.resolve(original.call(this, channel, method, payload, signal)).then((response) => validResponse(response) ? {
+					...response,
+					value: {
+						...response.value,
+						presets: presetChoices(response.value.presets)
+					}
+				} : response);
 				if (method !== "agentPresets/select") return original.call(this, channel, method, payload, signal);
 				const hostId = sessionModelHost(payload?.args?.agentId), id = payload?.args?.agentPreset;
 				const staged = origin;
@@ -774,6 +808,10 @@ window.__ModuleLoader__.load({
 				};
 				const face = {
 					...official,
+					hooks: {
+						...official.hooks,
+						agentPresetSeat: presetMenuStore(store, () => seat.roster.find((row) => row.isDefault)?.id)
+					},
 					async load() {
 						if (!active) return;
 						seat.loaded = true;

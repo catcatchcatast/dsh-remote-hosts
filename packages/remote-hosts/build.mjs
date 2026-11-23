@@ -1,10 +1,9 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                        
-                                                                                                                                                           
+// Public change history: docs/PUBLIC-CHANGES.md
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { build } from 'tsdown'
-                                                                            
+// Public change history: docs/PUBLIC-CHANGES.md
 const mobileFileBackend = new Set(['mobile.js', 'upload.js', 'detect.js', 'file-browser.js'])
 const root = path.dirname(fileURLToPath(import.meta.url))
 const workspace = path.resolve(root, '../..')

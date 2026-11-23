@@ -1,6 +1,31 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                         
-                                                                                                                                                 
+// Public change history: docs/PUBLIC-CHANGES.md
 import { sessionModelHost } from './model-catalog.js'
+
+// 兼容父预设保留当前选择或该主机默认项；内部预设仅在已选时展示名称。
+const STANDARD_MODES = ['standard-depth-1', 'standard-progress']
+const CHILD_MODES = new Set(STANDARD_MODES.flatMap(id => [`${id}-routed-child`, `${id}-sol-implement`]))
+export function presetChoices(rows, current, preferred) {
+  const parents = rows.filter(row => STANDARD_MODES.includes(row.id) && !row.broken)
+  if (!parents.length) return rows
+  const standard = parents.find(row => row.id === current)
+    ?? parents.find(row => row.id === preferred) ?? parents.find(row => row.isDefault) ?? parents[0]
+  return rows.filter(row => row.id === current || (!CHILD_MODES.has(row.id)
+    && row.id !== 'standard-original' && !(row.id === 'standard' && row.name)
+    && (!STANDARD_MODES.includes(row.id) || row === standard)))
+}
+export function presetMenuStore(store, defaultId) {
+  let previous, previousDefault, projected
+  return {
+    subscribe: listener => store.subscribe(listener),
+    getSnapshot() {
+      const state = store.getSnapshot(), preferred = defaultId()
+      if (state === previous && preferred === previousDefault) return projected
+      previous = state; previousDefault = preferred
+      projected = { ...state, options: presetChoices(state.options, state.current, preferred) }
+      return projected
+    },
+  }
+}
 
 const HERO = 'conversation.hero.agentPreset'
 const refusal = code => ({ ok: false, error: { code, message: 'Agent preset choices changed; choose again', details: {} } })
@@ -33,6 +58,10 @@ export function bindAgentPresetTargets({ slots, sessions, rpc, bridge, on, onRem
         return response
       })
     }
+    if (method === 'agentPresets/list') {
+      return Promise.resolve(original.call(this, channel, method, payload, signal)).then(response =>
+        validResponse(response) ? { ...response, value: { ...response.value, presets: presetChoices(response.value.presets) } } : response)
+    }
     if (method !== 'agentPresets/select') return original.call(this, channel, method, payload, signal)
     const hostId = sessionModelHost(payload?.args?.agentId), id = payload?.args?.agentPreset
     const staged = origin; origin = undefined
@@ -56,6 +85,7 @@ export function bindAgentPresetTargets({ slots, sessions, rpc, bridge, on, onRem
     const seat = { sessionId, store, roster: [], selecting: false, loaded: false, generation: 0,
       binding: sessionId === undefined ? undefined : sessions.binding(sessionId) }
     const face = { ...official,
+      hooks: { ...official.hooks, agentPresetSeat: presetMenuStore(store, () => seat.roster.find(row => row.isDefault)?.id) },
       async load() {
         if (!active) return
         seat.loaded = true

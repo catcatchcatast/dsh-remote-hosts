@@ -1,6 +1,6 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                             
+// Public change history: docs/PUBLIC-CHANGES.md
 'use strict'
-                                                                                                                                 
+// Public change history: docs/PUBLIC-CHANGES.md
 const { parentPort, workerData } = require('node:worker_threads')
 
 let disposed = false
@@ -61,7 +61,7 @@ async function run() {
   for (let attempt = 1; !disposed && (!cancelView || Atomics.load(cancelView, 0) !== 1) && attempt <= maxAttempts; attempt++) {
     try {
       const store = require(workerData.storePath)
-      disposer = store.publishBootstrap(workerData.port, workerData.authenticatedRootUrl, workerData.home, workerData.authAdapterSource)
+      disposer = store.publishBootstrap(workerData.port, workerData.authenticatedRootUrl, workerData.home, workerData.authAdapterSource, workerData.profile)
       if (disposed || cancelView && Atomics.load(cancelView, 0) === 1) {
         try { disposer?.() } catch { send({ type: 'failure', code: 'BOOTSTRAP_CLEANUP_FAILED' }) }
         return

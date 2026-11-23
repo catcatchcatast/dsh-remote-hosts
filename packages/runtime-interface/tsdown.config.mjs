@@ -1,7 +1,6 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                       
-                                                                                                                                     
+// Public change history: docs/PUBLIC-CHANGES.md
 import { defineConfig } from 'tsdown'
-                                                                                                                                               
+// Public change history: docs/PUBLIC-CHANGES.md
 
 export default defineConfig({
   name: 'dsh-runtime-interface/client', entry: { client: 'src/client/entry.js' },

@@ -1,5 +1,6 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                           
-                                                                                                                                               
+// Public change history: docs/PUBLIC-CHANGES.md
+import { isWebRuntimeVersion } from './web-020.js'
+// Public change history: docs/PUBLIC-CHANGES.md
 
 /** Official lifecycle and inbox objects remain inside this installation port. */
 export function createForkInboxIsolationPort(ctx, { upstreamVersion, persistence }) {
@@ -11,7 +12,7 @@ export function createForkInboxIsolationPort(ctx, { upstreamVersion, persistence
       if (disposed) return
       const session = agent.session
       const cut = session.inheritedEventCount
-      const lifecycleStart = (upstreamVersion === '0.2.0-rc.2' || upstreamVersion === '0.2.1-rc.2') ? session.firstLifecycleSeq : session.firstLiveSeq
+      const lifecycleStart = isWebRuntimeVersion(upstreamVersion) ? session.firstLifecycleSeq : session.firstLiveSeq
       if (!session.header.isSeeded || !session.header.parentSession || lifecycleStart !== cut || handled.has(session)) return
       signal?.throwIfAborted()
       // Read the durability boundary, not deprecated synchronous log snapshots.

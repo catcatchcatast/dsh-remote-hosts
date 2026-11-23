@@ -1,4 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                               
+// Public change history: docs/PUBLIC-CHANGES.md
 import z from '@deepseek-ai/schemastery'
 
 const volatileWrite = Symbol.for('cosmokit.volatile.write')

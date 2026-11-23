@@ -1,5 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                               
-                                                                                                                                                                         
+// Public change history: docs/PUBLIC-CHANGES.md
 
 /**
  * Stable history-import port for both official persistence contracts.

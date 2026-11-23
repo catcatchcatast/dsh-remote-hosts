@@ -1,6 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                             
-                                                                                                                                             
-                                                                                                                                     
+// Public change history: docs/PUBLIC-CHANGES.md
 import { classifyStreamFailure, streamFailureBrowserPolicy } from './stream-failure.js'
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value)
 const invalid = endpoint => Object.assign(new Error('Invalid browser request envelope'), {
@@ -80,8 +78,7 @@ function createBrowserStreamFailureCodec(policy) {
 export function browserStreamFailureCodecSource() {
   return `(${createBrowserStreamFailureCodec.toString()})(${JSON.stringify(streamFailureBrowserPolicy())})`
 }
-
-                                                                                                                                               
+// Public change history: docs/PUBLIC-CHANGES.md
 // Only the page-local public selection snapshot can identify what the official
 // workspace will restore. Shared persisted storage may already belong to another page.
 function readColdRestoreSession(reader) {

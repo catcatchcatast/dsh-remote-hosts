@@ -1,6 +1,6 @@
 {
   "name": "dsh-remote-hosts",
-  "version": "0.2.0-rc.1",
+  "version": "0.2.0-rc.2",
   "description": "Remote hosts and mobile synchronization with native workspace UI",
   "type": "module",
   "main": "./src/index.js",
@@ -18,7 +18,9 @@
     "LICENSE",
     "LICENSE.composer-history",
     "NOTICE.composer-history",
-    "LICENSE",
+    "LICENSE.preview-media",
+    "NOTICE.preview-media",
+    "NOTICE.html-parser",
     "NOTICE",
     "LICENSES",
     "THIRD-PARTY-NOTICES.md"
@@ -50,11 +52,18 @@
     "ws": "8.21.3"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "4.0.5",
-    "dsh-runtime-interface": "0.1.0-rc.1"
+    "@deepseek-ai/cordis": "4.1.0",
+    "@deepseek-ai/dsh-host-directory-picker-browse": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-client-ui-directory-picker-browse": "0.2.2-rc.5",
+    "dsh-runtime-interface": "0.1.0-rc.2"
   },
   "devDependencies": {
     "tsdown": "0.22.2",
     "react": "18.3.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/catcatchcatast/dsh-remote-hosts.git",
+    "directory": "packages/remote-hosts"
   }
 }

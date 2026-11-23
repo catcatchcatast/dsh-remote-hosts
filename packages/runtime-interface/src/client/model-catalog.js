@@ -1,8 +1,6 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                     
-                                                                                                                                             
-                                                                                                                                               
+// Public change history: docs/PUBLIC-CHANGES.md
 // Official rc2 resolver binding lives here; callers never receive a resolver or raw RPC.
-                                                                                                                                                                 
+// Public change history: docs/PUBLIC-CHANGES.md
 const fail = code => new Error(code)
 
 export function sessionModelHost(sessionId) {
@@ -179,7 +177,7 @@ export function bindHostModelCatalogs(ctx, resolver, rpc) {
   }
   const refresh = () => { for (const catalog of catalogs.values()) catalog.refresh() }
   const stops = [ctx.on('connection/reset', () => { for (const catalog of catalogs.values()) catalog.resetGeneration() })]
-  for (const event of ['llm/adapters-updated', 'settings/document-updated', 'credentials/reference-updated']) stops.push(ctx.remote.$on(event, refresh))
+  for (const event of ['llm/adapters-updated', 'llm/models-updated', 'settings/document-updated', 'credentials/record-updated', 'credentials/reference-updated']) stops.push(ctx.remote.$on(event, refresh))
   return () => {
     for (const stop of stops) if (typeof stop === 'function') stop()
     for (const binding of bindings.values()) binding.release()

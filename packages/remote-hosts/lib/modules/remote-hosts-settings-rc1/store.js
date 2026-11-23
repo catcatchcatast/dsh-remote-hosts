@@ -1,10 +1,10 @@
+// Public change history: docs/PUBLIC-CHANGES.md
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import { normalizeRuntimeVersion } from 'dsh-runtime-interface'
 import { validateTarget } from '../rc1-host-carriers/index.js'
-
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                     
+// Public change history: docs/PUBLIC-CHANGES.md
 
 export function resolveDshHome(env = process.env) {
   const configured = typeof env?.DSH_HOME === 'string' ? env.DSH_HOME.trim() : ''
@@ -30,6 +30,7 @@ function asTarget(value) {
     configFile: value.configFile,
     localPort: value.localPort,
     remotePort: value.remotePort,
+    ...(value.runtime === undefined ? {} : { runtime: value.runtime }),
     launch: value.launch === 'systemd-user' ? 'systemd-user' : 'none',
   })
   return { ...target, ...(upstreamVersion === undefined ? {} : { upstreamVersion }), enabled: value.enabled !== false }

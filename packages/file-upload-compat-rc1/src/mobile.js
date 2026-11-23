@@ -1,4 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                               
+// Public change history: docs/PUBLIC-CHANGES.md
 import { join } from 'node:path'
 import { createUploadHandler, createImageIntakePolicy, createSweeper, PARTIAL_TTL_MS } from './upload.js'
 import { createFileBrowserHandler } from './file-browser.js'

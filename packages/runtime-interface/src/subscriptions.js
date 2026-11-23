@@ -1,5 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                               
-                                                                                                                                                   
+// Public change history: docs/PUBLIC-CHANGES.md
 
 
 export const CODEX_ALIAS = 'openai-codex'
@@ -138,14 +137,12 @@ function installRegisterAdapter(llm, onCodexAdapter) {
 export function installSubscriptions(ctx, config = {}) {
   return ctx.effect(
     () => {
-      let currentAdapter
+      let restoreSearch
       const onCodexAdapter = (adapter, provider, aliasAdapter) => {
-        currentAdapter = adapter
         const externalDispose = typeof config.onCodexAdapter === 'function'
           ? config.onCodexAdapter(Object.freeze({ provider, alias: CODEX_ALIAS }))
           : undefined
         return () => {
-          if (currentAdapter === adapter) currentAdapter = undefined
           externalDispose?.()
         }
       }
@@ -158,7 +155,7 @@ export function installSubscriptions(ctx, config = {}) {
           try {
             const { installSearch } = await import('./subscription-search.js')
             if (!active || config.isActive?.() === false) return
-            installSearch(searchCtx, () => currentAdapter, config.createSearchProvider, config.preferences)
+            restoreSearch = installSearch(searchCtx, config.preferences)
           } catch (error) {
             dispose()
             throw error
@@ -168,7 +165,7 @@ export function installSubscriptions(ctx, config = {}) {
         dispose()
         throw error
       }
-      return dispose
+      return () => { dispose(); restoreSearch?.() }
     },
     'subscriptions-compat-rc1: Codex provider alias',
   )

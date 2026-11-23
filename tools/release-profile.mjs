@@ -1,5 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                     
-                                                                                                                                     
+// Public change history: docs/PUBLIC-CHANGES.md
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -49,7 +48,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       const manifest = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8'))
       if (!manifest.scripts?.build) continue
       // Only package-defined builds run; npm executes on the explicit package cwd.
-      const result = spawnSync(process.execPath, ['build.mjs'], { cwd, stdio: 'inherit', windowsHide: true })
+      const npmCli = path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js')
+      const result = spawnSync(process.execPath, [npmCli, 'run', 'build'], { cwd, stdio: 'inherit', windowsHide: true })
       if (result.error) throw result.error
       if (result.status !== 0) process.exit(result.status ?? 1)
     }

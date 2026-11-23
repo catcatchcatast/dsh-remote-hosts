@@ -1,5 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                           
-                                                                             
+// Public change history: docs/PUBLIC-CHANGES.md
 import * as files from '../lib/modules/file-upload-compat-rc1/mobile.js'
 import * as bootstrap from '../lib/modules/mobile-bootstrap-rc1/index.js'
 import * as interactions from '../lib/modules/mobile-interactions-compat-rc1/index.js'

@@ -1,8 +1,6 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                     
-                                                                                                                                         
-                                                                                                                                                 
+// Public change history: docs/PUBLIC-CHANGES.md
 'use strict'
-                                                                                                                                 
+// Public change history: docs/PUBLIC-CHANGES.md
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
@@ -125,11 +123,11 @@ function validate(record, port) {
   return record
 }
 function readRecord(port, home = os.homedir(), legacy = true) {
-  port = portNumber(port)
+  const selector = port === 'desktop' ? 'desktop' : portNumber(port)
   const dir = path.join(home, '.dsh-mobile')
   if (process.platform === 'win32') hardenWindowsAcl(dir, true)
   else assertOwner(dir, true)
-  const file = path.join(dir, `bootstrap-${port}.json`)
+  const file = path.join(dir, `bootstrap-${selector}.json`)
   if (process.platform === 'win32') hardenWindowsAcl(file)
   else assertOwner(file)
   const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0))
@@ -137,7 +135,11 @@ function readRecord(port, home = os.homedir(), legacy = true) {
     const st = fs.fstatSync(fd)
     if (!st.isFile() || st.size > LIMIT) throw new Error('BOOTSTRAP_INVALID_SIZE')
     const record = JSON.parse(fs.readFileSync(fd, 'utf8'))
-    ;(legacy ? validate : validateIdentity)(record, port)
+    ;(legacy ? validate : validateIdentity)(record, selector === 'desktop' ? portNumber(record.port) : selector)
+    if (selector === 'desktop') {
+      const numeric = readRecord(record.port, home, legacy)
+      if (numeric.instanceId !== record.instanceId || numeric.pid !== record.pid || numeric.processStamp !== record.processStamp || numeric.authenticatedRootUrl !== record.authenticatedRootUrl) throw new Error('BOOTSTRAP_STALE_INSTANCE')
+    }
     return record
   } finally { fs.closeSync(fd) }
 }
@@ -176,7 +178,7 @@ async function readBootstrapV2(request, { signal, home = os.homedir() } = {}) {
     return failure(code)
   }
 }
-function publishBootstrap(port, authenticatedRootUrl, home = os.homedir(), authAdapterSource) {
+function publishBootstrap(port, authenticatedRootUrl, home = os.homedir(), authAdapterSource, profile) {
   port = portNumber(port)
   const record = { version: 1, port, pid: process.pid, instanceId: randomUUID(), processStamp: processStamp(process.pid), issuedAt: new Date().toISOString(), authenticatedRootUrl }
   if (authAdapterSource !== undefined) {
@@ -189,13 +191,16 @@ function publishBootstrap(port, authenticatedRootUrl, home = os.homedir(), authA
   const dir = ensureDirectory(home)
   if (authAdapterSource !== undefined) atomicPrivateWrite(dir, `read-bootstrap-auth-${record.authAdapterSha256}.cjs`, authAdapterSource, true)
   atomicPrivateWrite(dir, 'read-bootstrap.cjs', fs.readFileSync(__filename, 'utf8'))
-  atomicPrivateWrite(dir, `bootstrap-${port}.json`, data)
+  const names = [`bootstrap-${port}.json`, ...(profile === 'desktop' ? ['bootstrap-desktop.json'] : [])]
+  for (const name of names) atomicPrivateWrite(dir, name, data)
   return () => {
-    const file = path.join(dir, `bootstrap-${port}.json`)
+    for (const name of names) {
+    const file = path.join(dir, name)
     try {
       assertOwner(file)
       if (JSON.parse(fs.readFileSync(file, 'utf8')).instanceId === record.instanceId) fs.unlinkSync(file)
     } catch (error) { if (error.code !== 'ENOENT') throw new Error('BOOTSTRAP_CLEANUP_FAILED') }
+    }
   }
 }
 module.exports = { publishBootstrap, readBootstrap, readBootstrapV2, portNumber }

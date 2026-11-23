@@ -1,16 +1,15 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                   
-                                                                                                                                                     
-                                                                                                                                                                   
-                                                                                                                                                 
-                                                                                                                                                   
-                                                                                                                                               
-                                                                                                                                             
-                                                                                                                                         
+// Public change history: docs/PUBLIC-CHANGES.md
 import { randomUUID } from 'node:crypto'
+// Public change history: docs/PUBLIC-CHANGES.md
 import { classifyStreamFailure, markStreamFailure, sanitizeTransportDiagnostic } from './stream-failure.js'
-
-                                                                                                                                           
+// Public change history: docs/PUBLIC-CHANGES.md
 const sidebarFileRoutes = new Set(['session.cwd', 'fs.tree', 'fs.search', 'fs.read', 'fs.write'].map(method => '/sidebar/api/' + method))
+export const sessionAccountPath = '/api/subscriptions-auth.sessionAccount'
+export const editTurnMethods = Object.freeze({
+  '/dsh-edit-turn/state': 'GET',
+  '/dsh-edit-turn/reply': 'GET',
+  '/dsh-edit-turn/apply': 'POST',
+})
 
 /** Official, in-memory authenticated loopback carrier; no token logging or RPC replay. */
 export async function createCarrier(origin, authenticatedUrl, WebSocket, signal, { diagnostics, hostId, entryId = randomUUID() } = {}) {
@@ -42,11 +41,13 @@ export async function createCarrier(origin, authenticatedUrl, WebSocket, signal,
       const sidebarJson = sidebarFileRoutes.has(url.pathname)
       const sidebarUpload = url.pathname === '/sidebar/upload'
       const sidebarFile = url.pathname === '/sidebar/file'
-                                                                                                                                                         
+// Public change history: docs/PUBLIC-CHANGES.md
       const officialFileUpload = url.pathname === '/api/session/uploadFileBinary'
       const workspaceFileBytes = url.pathname === '/api/workspaceFiles/readBytes' || url.pathname === '/api/officeToPdf/render'
-      if (url.origin !== base.origin || (!sidebarJson && !sidebarUpload && !sidebarFile && !officialFileUpload && !workspaceFileBytes && url.pathname !== '/api/upload' && !['/api/upload/v2/', '/api/file-browser/v1/'].some(prefix => url.pathname.startsWith(prefix)))) throw new Error('CARRIER_ROUTE_INVALID')
+      const editMethod = url.pathname === sessionAccountPath ? 'POST' : editTurnMethods[url.pathname]
+      if (url.origin !== base.origin || (!sidebarJson && !sidebarUpload && !sidebarFile && !officialFileUpload && !workspaceFileBytes && !editMethod && url.pathname !== '/api/upload' && !['/api/upload/v2/', '/api/file-browser/v1/'].some(prefix => url.pathname.startsWith(prefix)))) throw new Error('CARRIER_ROUTE_INVALID')
       const method = init.method ?? 'GET'
+      if (editMethod && method !== editMethod) throw new Error('CARRIER_METHOD_INVALID')
       if (!['GET', 'HEAD', 'POST', 'PATCH', 'DELETE'].includes(method)) throw new Error('CARRIER_METHOD_INVALID')
       if ((officialFileUpload || workspaceFileBytes) && method !== 'POST') throw new Error('CARRIER_METHOD_INVALID')
       if (workspaceFileBytes && new Headers(init.headers).get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() !== 'application/json') throw new Error('CARRIER_CONTENT_TYPE_INVALID')
@@ -71,7 +72,7 @@ export async function createCarrier(origin, authenticatedUrl, WebSocket, signal,
       const rpcId = randomUUID()
       const response = await fetch(new URL(`/api/${endpoint}`, base), {
         method: 'POST', redirect: 'error', headers: { 'Content-Type': 'application/json', Cookie: cookie },
-                                                                                                                                                                         
+// Public change history: docs/PUBLIC-CHANGES.md
         signal: AbortSignal.any([signal, requestSignal, AbortSignal.timeout(endpoint === 'session/list' ? 60000 : 15000)]),
         body: JSON.stringify({ type: 'client-request', rpcId, method: endpoint, payload }),
       })
@@ -86,7 +87,7 @@ export async function createCarrier(origin, authenticatedUrl, WebSocket, signal,
     async *open(endpoint, payload, requestSignal = signal) {
       if (!/^[a-zA-Z$][a-zA-Z0-9$/]*$/.test(endpoint)) throw new Error('CARRIER_ROUTE_INVALID')
       const streamSignal = AbortSignal.any([signal, requestSignal])
-                                                                                                                                                                   
+// Public change history: docs/PUBLIC-CHANGES.md
       // A shared connection can die while this reader still wants updates.
       // Preserve caller cancellation; let the interface classify connection loss.
       const throwIfStopped = () => {
@@ -161,7 +162,7 @@ export async function createCarrier(origin, authenticatedUrl, WebSocket, signal,
         const reason = status === 401 || status === 403 ? 'unauthorized' : transport.reason === 'unknown' ? 'transport-disconnected' : transport.reason
         const classification = classifyStreamFailure({ source: 'carrier', reason }, { stage })
         const code = { unauthorized: 'runtime-interface/unauthorized', 'resource-limit': 'runtime-interface/buffer-limit', 'invalid-frame': 'runtime-interface/invalid-frame' }[reason] ?? 'transport/disconnected'
-        failure = markStreamFailure(Object.assign(new Error(reason === 'unauthorized' ? 'CARRIER_STREAM_UNAUTHORIZED' : 'CARRIER_STREAM_DISCONNECTED'), { code }), classification)
+        failure = markStreamFailure(Object.assign(new Error(reason === 'unauthorized' ? 'CARRIER_STREAM_UNAUTHORIZED' : 'CARRIER_STREAM_DISCONNECTED'), { code, ...(status === undefined ? {} : { httpStatus: status }) }), classification)
         ended = true; stopTransportProgress(); endSource = 'socket-error'
         trace('ws-error', endpoint, streamId, { ...sanitizeTransportDiagnostic({ errorCode: error?.code, httpStatus: status }),
           source: 'carrier', reason, stage: receivedItem ? 'live' : 'bootstrap', cancelSource: cancellation() })
@@ -178,7 +179,7 @@ export async function createCarrier(origin, authenticatedUrl, WebSocket, signal,
           throwIfStopped()
           if (failure) throw failure
           if (queue.length) { const item = queue.shift(); queuedBytes -= item.bytes; yield item.value; continue }
-                                                                                                                                                           
+// Public change history: docs/PUBLIC-CHANGES.md
           if (ended) { if (normalEnd && (endpoint === 'job/follow' || endpoint === 'userQuestions/attachWait')) return; throw new Error('CARRIER_STREAM_ENDED') }
           await new Promise(resolve => { wake = resolve })
         }

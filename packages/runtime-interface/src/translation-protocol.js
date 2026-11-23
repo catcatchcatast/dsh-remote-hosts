@@ -1,4 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                               
+// Public change history: docs/PUBLIC-CHANGES.md
 const hashPattern = /^[a-f0-9]{64}$/u
 const languagePattern = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$/u
 const record = (value, label) => { if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`invalid ${label}`); return value }

@@ -1,5 +1,9 @@
-# Public packaging changes
+# 2026-11-23 远程插件公开整理
 
-This release preserves the runtime algorithms and compiled client behavior. Internal change-history comments and machine-local test paths have been replaced with public notes or explicit developer environment inputs. Source-map contents have the same comment sanitization. The three installable packages use portable exact cross-package versions; legacy packages are internal-only. Self-authored code follows the project Apache-2.0 license, while third-party source and notices retain original attribution.
+本候选整合官方 0.2.2-rc.5 接口适配、计划侧栏读取与预览生命周期修复。源码由已验收的接口与远程模块组成，两个公开包具有独立的更新版本号。
 
-The frozen functional input includes native workspace menus, current-session input recall, bounded streaming, and parent/descendant pause behavior. Public source/archive member manifests identify the exact reviewed candidate bytes. No prior private Git history, profiles, authorization material, or runtime data is included.
+公开打包沿用单实例接口依赖，远程包将接口包声明为精确 peer dependency（由安装配置提供的依赖）。安装说明要求同时提供两个归档。构建输入模块保持源码身份，统一生成远程包内部模块。
+
+自有代码使用 Apache-2.0，保留远程模块、输入历史、媒体辅助模块及 HTML 解析依赖的原始许可。官方计划读取测试夹具附带 DeepSeek MIT 原文。
+
+私有运行记录、真实主机配置、个人目录和本机部署脚本在本地证据目录保存。已封存且未被公开入口引用的访客分享宿主文件含固定私网配置，因此从本次源码和安装包中排除。源码注释统一指向本公开记录，生成文件的来源路径使用仓库相对路径。

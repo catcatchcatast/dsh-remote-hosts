@@ -1,4 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                               
+// Public change history: docs/PUBLIC-CHANGES.md
 // dsh-file-upload — a dual-face DeepSeek Harness plugin: one cordis row, one
 // apply, three capabilities:
 //   1. Claude-style upload surface (webServer + web client): paperclip button
@@ -13,9 +13,7 @@
 //      MarkItDown CLI is used only when already present on the machine.
 //   3. read_document tool (host): paged Markdown reading with a byte-budgeted
 //      LRU conversion cache.
-                                                                                                                                                   
-                                                                                                                                                   
-                                                                                                                                                   
+// Public change history: docs/PUBLIC-CHANGES.md
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';

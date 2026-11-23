@@ -1,4 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                               
+// Public change history: docs/PUBLIC-CHANGES.md
 const NAMESPACE = 'subscriptions-compat-rc1'
 const FIELDS = ['quickQuotaVisible', 'searchProvider']
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value)

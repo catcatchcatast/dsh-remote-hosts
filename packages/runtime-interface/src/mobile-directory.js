@@ -1,5 +1,5 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                           
-import { WEB_021_RUNTIME_VERSION } from './web-020.js'
+// Public change history: docs/PUBLIC-CHANGES.md
+import { isModernWebRuntimeVersion } from './web-020.js'
 
 /** Mobile browses host directories without replacing the desktop's native picker. */
 export function createMobileDirectoryPort(ctx, { upstreamVersion, getController }) {
@@ -7,7 +7,7 @@ export function createMobileDirectoryPort(ctx, { upstreamVersion, getController 
   async function controller() {
     ctx.fiber.assertActive()
     const current = getController()
-    if (upstreamVersion !== WEB_021_RUNTIME_VERSION) return current
+    if (!isModernWebRuntimeVersion(upstreamVersion)) return current
     const picker = ctx.get('directoryPicker')
     if (current && picker?.capability?.().kind !== 'native') return current
     // Fresh isolate labels are private to this owning plugin; Cordis unloads

@@ -1,42 +1,17 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                   
-                                                                                                                                               
-                                                                                                                                                     
-                                                                                                                                           
-                                                                                                                                                 
-                                                                                                                                           
-                                                                                                                                             
-                                                                                                                                                                   
-                                                                                                                                                       
-                                                                                                                                               
-                                                                                                                                                             
-                                                                                                                                               
-                                                                                                                                             
-                                                                                                                                             
-                                                                                                                                               
+// Public change history: docs/PUBLIC-CHANGES.md
 import { once } from 'node:events'
 import { InteractionView } from './interaction-view.js'
-                                                                                                                                                     
-                                                                                                                                                 
-                                                                                                                                                       
+// Public change history: docs/PUBLIC-CHANGES.md
 import { isCoreInteractionFrame, decodeBrowserInteractionResult, ADMIN_CATALOG_ENDPOINTS } from 'dsh-runtime-interface'
-                                                                                                                                                       
-                                                                                                                                     
-                                                                                                                                           
-                                                                                                                                         
-                                                                                                                                                                 
-                                                                                                                                                         
-                                                                                                                                                                     
-                                                                                                                                                       
-                                                                                                                                                     
-                                                                                                                                               
-                                                                                                                           
-                                                                                                                                                   
-                                                                                                                                                 
-                                                                                                                                                   
-import { createFileProxyHandler, relayWorkspaceFileBytes, fileProxyBootstrap, FILE_PROXY_PREFIX } from './file-proxy.js'
+// Public change history: docs/PUBLIC-CHANGES.md
+import { sessionAccountPath } from 'dsh-runtime-interface/http-carrier'
+import { createFileProxyHandler, relayWorkspaceFileBytes, fileProxyBootstrap, FILE_PROXY_PREFIX, NATIVE_FILE_UPLOAD_PATH } from './file-proxy.js'
+// Public change history: docs/PUBLIC-CHANGES.md
+import { FilePreviewCache } from './file-preview-cache.js'
+import { FILE_PREVIEW_PATH, createFilePreviewHandler } from './file-preview.js'
 import { readBootstrapHostInventory, registerHostInventory } from './host-selector.js'
 import { BROWSER_STREAM_PATH, registerStreamMux, serveStreamSocket } from './stream-mux.js'
-                                                                                                                                             
+// Public change history: docs/PUBLIC-CHANGES.md
 import { CURRENT_RUNTIME_VERSION, LEGACY_RUNTIME_VERSION, canonicalToBrowserWire, createBrowserStreamEncoder, normalizeRuntimeVersion, upstreamToCanonicalWire, wrapHostCarrier, classifyStreamFailure, markStreamFailure, sanitizeStreamFailure, streamFailureDiagnosticCode } from 'dsh-runtime-interface'
 import { WORKSPACE_FILE_ENDPOINTS, OFFICE_TO_PDF_ENDPOINTS, WORKSPACE_BINARY_ENDPOINTS, workspaceFileBytesRequest, workspaceIdentityReferences, mapWorkspaceRequest, scopeWorkspaceValue, scopeWorkspaceFrame } from 'dsh-runtime-interface'
 import { scopeProjection, scopeJobFrame, createJobStreamEncoder, applyControlQueue } from 'dsh-runtime-interface'
@@ -91,6 +66,7 @@ export const HOST_RPC_ALLOWLIST = Object.freeze([
   'session/rename',
   'session/fork',
   'session/page',
+  'session/events',
   'session/follow',
   'session/control',
   'session/projections',
@@ -109,6 +85,7 @@ export const HOST_RPC_ALLOWLIST = Object.freeze([
   'userQuestions/attachWait',
   'agentPresets/list',
   'agentPresets/select',
+  'agentTeams/setEnabled',
   'agentPreset.list',
   'agentPreset.select',
   'subagents/interruptByParent',
@@ -137,6 +114,8 @@ export const HOST_RPC_ALLOWLIST = Object.freeze([
   'llm/discoverModels',
   'llm/listConfigurableProviders',
   'llm/listProviders',
+// Public change history: docs/PUBLIC-CHANGES.md
+  'antigravityAcp/quota',
   'pluginInventory/list',
   'dynamicCordisRunner/inventory',
   'dynamicCordisRunner/syncInspectManifest',
@@ -182,6 +161,7 @@ const SESSION_ENDPOINTS = new Set([
   'session/rename',
   'session/fork',
   'session/page',
+  'session/events',
   'session/follow',
   'session/prompt',
   'session/cancel',
@@ -192,6 +172,7 @@ const SESSION_ENDPOINTS = new Set([
   'agentPreset.select'
 ])
 const DIRECT_AGENT_ENDPOINTS = new Set([
+  'agentTeams/setEnabled',
   'userQuestions/answer',
   'userQuestions/attachWait',
   'agentPresets/select',
@@ -212,6 +193,7 @@ const DIRECT_SUBAGENT_ENDPOINTS = new Set([
 ])
 const SUBAGENT_REQUEST_ENDPOINTS = new Set(['subagents/prompt'])
 const SESSION_REQUEST_ID_ENDPOINTS = new Set([
+  'antigravityAcp/quota',
   'session/projections', 'job/list', 'job/follow', 'job/kill',
   ...SESSION_ENDPOINTS,
   'messageFeedback/delete',
@@ -267,7 +249,8 @@ function jsonSafeError(error, fallbackCode = 'browser-host-hub-rc1/host-unavaila
 }
 
 function failure(error, fallbackCode) {
-  return { ok: false, error: jsonSafeError(error, fallbackCode) }
+  const fault = classifyStreamFailure(error)
+  return { ok: false, error: { ...jsonSafeError(error, fallbackCode), ...(fault.reason === 'unknown' ? {} : { streamFailure: fault }) } }
 }
 
 function success(value) {
@@ -406,6 +389,23 @@ function wait(ms, signal) {
     timer = setTimeout(done, ms)
     signal.addEventListener('abort', done, { once: true })
   })
+}
+
+// 终态不轮询；用户的既有重连操作释放旧Host生命周期后，原读泵才继续。
+async function waitForHostReplacement(entry, signal) {
+  const hostSignal = entry?.carrier.signal
+  if (!hostSignal || signal.aborted) return false
+  if (!hostSignal.aborted) await new Promise(resolve => {
+    const done = () => {
+      hostSignal.removeEventListener('abort', done)
+      signal.removeEventListener('abort', done)
+      resolve()
+    }
+    hostSignal.addEventListener('abort', done, { once: true })
+    signal.addEventListener('abort', done, { once: true })
+    if (hostSignal.aborted || signal.aborted) done()
+  })
+  return !signal.aborted
 }
 
 class AsyncQueue {
@@ -616,6 +616,7 @@ export function mapControlFrame(frame, hostId, codec = undefined) {
   }
   if (typeof frame.sessionId === 'string') {
     const result = { ...frame, sessionId: normalized.encodeCompositeId(hostId, frame.sessionId) }
+    if (frame.type === 'projection' && typeof frame.key === 'string') result.value = scopeProjection({ values: { [frame.key]: frame.value } }, hostId, normalized).values[frame.key]
     if (frame.type === 'queue' && Array.isArray(frame.items)) result.items = frame.items.map(item => mapQueueItem(item, hostId, normalized))
     if (frame.type === 'jobs' && Array.isArray(frame.jobs)) result.jobs = frame.jobs.map(job => mapJob(job, hostId, normalized))
     return result
@@ -1148,6 +1149,7 @@ export function createBrowserBootstrapScript(options = {}) {
     {prefix:'/codex-subscription/',kind:'subscription'},
     {prefix:'/subscriptions-auth/',kind:'subscription'},
     {prefix:'/api/subscriptions-auth.',kind:'subscription',methodPrefix:'subscriptions-auth.'},
+    {prefix:'/api/account/',kind:'account',methodPrefix:'account/'},
     {prefix:'/remote-hosts/',kind:'management'}
   ]);
   const SELECTOR=${scriptLiteral(HOST_SELECTOR)};
@@ -1310,7 +1312,7 @@ export function createBrowserBootstrapScript(options = {}) {
     }
   };
   const socketUrl=()=>{
-    const url=new URL(STREAM_PATH,globalThis.location && globalThis.location.href || 'http://dsh.invalid/');
+    const url=new URL(STREAM_PATH,previousTransport?.streamBaseUrl || globalThis.location && globalThis.location.href || 'http://dsh.invalid/');
     url.protocol=url.protocol==='https:'?'wss:':'ws:';
     return url.href;
   };
@@ -1417,6 +1419,7 @@ export function createBrowserBootstrapScript(options = {}) {
     const target=targetUrl(input);
     if(target.direct){
       validateDirectRequest(target,init);
+      if(target.url.pathname===${scriptLiteral(sessionAccountPath)}) return globalThis.fetch(input,init);
       return nativeFetch(input,init);
     }
     const decorated=decorate(target,init);
@@ -1444,6 +1447,11 @@ export function createBrowserBootstrapScript(options = {}) {
     },error=>{if(read && coldRestoreConsumed===read.consume) read.consume(undefined,'failed');throw error;});
   };
   async function* openStream(endpoint,payload,signal){
+    if(endpoint.startsWith('account/')){
+      if(typeof state.openLocalAccountStream!=='function') throw new Error('local account stream is not initialized');
+      yield* state.openLocalAccountStream(endpoint,payload,signal);
+      return;
+    }
     if(!ALLOWLIST.has(endpoint)) throw new TypeError('RPC endpoint is not allowlisted: '+endpoint);
     if(!STREAM_ENDPOINTS.has(endpoint)) throw new TypeError('RPC endpoint is not streaming: '+endpoint);
     const stream=protocolStream(endpoint,selectedPayload(endpoint,payload),signal);
@@ -1495,6 +1503,10 @@ export class BrowserHostHub {
   #workspacePins = new Map()
   #aggregateHostTimeoutMs
   #sessionListRefreshTimeoutMs
+  #filePreviewCache
+
+  filePreviewCache() { return this.#filePreviewCache ??= new FilePreviewCache() }
+  closeFilePreviews() { this.#filePreviewCache?.close() }
 
   constructor(options = {}) {
     if (!isRecord(options) || options.perHost === undefined) throw new TypeError('perHost carrier map is required')
@@ -1670,7 +1682,7 @@ export class BrowserHostHub {
   async #aggregateCall(endpoint, payload, signal) {
     const entries = this.#entries()
     if (entries.length === 0) return failure(new BrowserHostHubError('browser-host-hub-rc1/host-unavailable', 'No Host carrier is configured'))
-                                                                                                                                             
+// Public change history: docs/PUBLIC-CHANGES.md
     const pageId = typeof payload?.__pageId === 'string' && payload.__pageId.length <= 128 && payload.__pageId.length > 0 ? payload.__pageId : undefined
     let preferred
     const orderedTarget = pageId && payload?.__coldRestore?.orderedRefresh === 'target'
@@ -1712,11 +1724,24 @@ export class BrowserHostHub {
       if (requestKey !== undefined && pageId) entries.forEach((entry, index) => {
         const key = `${entry.hostId}\u0000${requestKey}`
         const refresh = this.#sessionListRefreshes.get(key)
-        if (!refresh) return
+        if (!refresh) {
+          if (!signal.aborted && results[index]?.ok === false) {
+            const state = [...this.#events.values()].find(state => state.pageId === pageId)
+            state?.hostStates?.get(entry.hostId)?.restoreDirectory?.()
+          }
+          return
+        }
         for (const target of refresh.targets) if (target.pageId === pageId) {
           target.waiting = false
-          if (targetOnly || results[index]?.ok === true) target.delivered = true
-          else { target.deferred = true; refresh.deferred = true }
+          if (targetOnly || results[index]?.ok === true) {
+            target.delivered = true
+            if (results[index]?.ok === true && target.hostState && target.hostState.generation === target.generation) target.hostState.directoryPending = false
+          }
+          else {
+            target.deferred = true
+            refresh.deferred = true
+            if (!signal.aborted) target.hostState?.restoreDirectory?.()
+          }
         }
         this.#publishSessionListRefresh(key, refresh)
       })
@@ -1744,9 +1769,9 @@ export class BrowserHostHub {
     const successful = usable.filter(result => result.ok === true)
     if (successful.length === 0) return mergeError(results)
     const value = mergeListValues(endpoint, successful.map(result => result.value))
-                                                                                                                                                           
+// Public change history: docs/PUBLIC-CHANGES.md
     // Check entries, not the sparse result array: pending hosts must never count as complete.
-                                                                                                                                                         
+// Public change history: docs/PUBLIC-CHANGES.md
     // Early target eligibility does not restrict an all-success full fallback.
     const complete = (orderedComplete || (orderedTarget && preferred)) && entries.every((_, index) => results[index]?.ok === true) && !signal.aborted
     if (targetOnly && !complete) {
@@ -1856,9 +1881,12 @@ export class BrowserHostHub {
   #registerSessionListTargets(hostId, state, hostState, generation) {
     if (generation === undefined) return
     for (const [key, refresh] of this.#sessionListRefreshes) {
-      if (refresh.hostId !== hostId) continue
+      if (refresh.hostId !== hostId || refresh.expired || refresh.invalidated) continue
       const cold = refresh.targets.filter(target => target.pageId && target.pageId === state.pageId)
-      for (const target of cold) if (!target.delivered && target.state === undefined) Object.assign(target, { state, hostState, generation })
+      for (const target of cold) if (!target.delivered && target.state === undefined) {
+        Object.assign(target, { state, hostState, generation })
+        hostState.directoryPending = true
+      }
       if (cold.length === 0 && !refresh.completed && hostState.ready === true && !refresh.targets.some(target => target.state === state && target.hostState === hostState && target.generation === generation)) {
         refresh.targets.push({ state, hostState, generation, versions: new Map(refresh.startVersions) })
       }
@@ -1867,7 +1895,7 @@ export class BrowserHostHub {
   }
 
   #publishSessionListRefresh(key, refresh) {
-    if (!refresh.completed || refresh.expired) return
+    if (!refresh.completed || refresh.expired || refresh.invalidated) return
     for (const target of refresh.targets) {
       if (target.delivered || target.waiting) continue
       if (target.pageId && target.deferred && (target.state === undefined || target.hostState?.ready !== true)) continue
@@ -1887,6 +1915,7 @@ export class BrowserHostHub {
         }
       }
       target.delivered = true
+      if (refresh.result?.ok === true && target.hostState && target.hostState.generation === target.generation) target.hostState.directoryPending = false
     }
     if (refresh.targets.every(target => target.delivered)) {
       clearTimeout(refresh.timer)
@@ -1897,10 +1926,12 @@ export class BrowserHostHub {
   #retireSessionListPage(state, hostState, generation) {
     if (!state.pageId) return
     for (const [key, refresh] of this.#sessionListRefreshes) {
-      for (const target of refresh.targets) if (target.pageId === state.pageId && (target.state === state || target.state === undefined) && (!hostState || target.hostState === hostState && target.generation === generation)) {
+      let retired = false
+      for (const target of refresh.targets) if ((target.state === state || target.pageId === state.pageId && target.state === undefined) && (!hostState || target.hostState === hostState && target.generation === generation)) {
         target.delivered = true
-        if (hostState) refresh.invalidated = true
+        retired = true
       }
+      if (hostState && retired && refresh.targets.every(target => target.delivered)) refresh.invalidated = true
       this.#publishSessionListRefresh(key, refresh)
     }
   }
@@ -1916,16 +1947,22 @@ export class BrowserHostHub {
     return this.#archivedSessionIds.get(hostId)?.has(rawId) !== true
   }
 
-  async #boundedSessionListHostCall(payload, outerSignal, hostId, requestKey, pageId, orderedComplete = false) {
+  async #boundedSessionListHostCall(payload, outerSignal, hostId, requestKey, pageId, orderedComplete = false, restoreDirectory = false) {
     const cacheKey = `${hostId}\u0000${requestKey}`
     let refresh = this.#sessionListRefreshes.get(cacheKey)
+    if (refresh?.expired || refresh?.invalidated) {
+      clearTimeout(refresh.timer)
+      refresh.controller.abort()
+      this.#sessionListRefreshes.delete(cacheKey)
+      refresh = undefined
+    }
     if (refresh === undefined) {
       const controller = new AbortController()
       let promise
       const versions = this.#sessionListSessionVersions.get(hostId)
       const startVersions = versions === undefined ? new Map() : new Map(versions)
       const targets = this.#captureSessionListTargets(hostId, startVersions)
-      refresh = { hostId, promise: undefined, deferred: false, completed: false, startVersions, targets, expired: false, result: undefined, timer: undefined }
+      refresh = { hostId, controller, promise: undefined, deferred: false, completed: false, startVersions, targets, expired: false, result: undefined, timer: undefined }
       this.#sessionListRefreshes.set(cacheKey, refresh)
       promise = this.#callHost('session/list', payload, controller.signal, hostId)
         .then(result => {
@@ -1944,6 +1981,7 @@ export class BrowserHostHub {
       }, this.#sessionListRefreshTimeoutMs)
       refresh.timer.unref?.()
     }
+    if (restoreDirectory) refresh.deferred = true
     if (pageId) {
       let target = refresh.targets.find(target => target.pageId === pageId && !target.delivered)
       if (!target) {
@@ -1953,6 +1991,7 @@ export class BrowserHostHub {
         if (!target) { target = { versions: new Map(refresh.startVersions) }; refresh.targets.push(target) }
         Object.assign(target, { pageId, state, hostState, generation: hostState?.generation, waiting: true, delivered: false })
       } else target.waiting = true
+      if (target.hostState) target.hostState.directoryPending = true
     }
 
     let timer
@@ -1969,7 +2008,10 @@ export class BrowserHostHub {
     })
     try {
       const result = await Promise.race([refresh.promise, boundary])
-      if (orderedComplete && (refresh.expired || refresh.invalidated || outerSignal.aborted)) return failure(new BrowserHostHubError('browser-host-hub-rc1/host-unavailable', 'Directory read was retired'))
+      if (orderedComplete && (refresh.expired || refresh.invalidated || outerSignal.aborted)) return failure(markStreamFailure(
+        new BrowserHostHubError('browser-host-hub-rc1/host-unavailable', 'Directory read was retired'),
+        { source: 'hub', reason: outerSignal.aborted ? 'aborted' : refresh.expired ? 'transport-timeout' : 'transport-disconnected', stage: 'live' }
+      ))
       return result
     } finally {
       if (timer !== undefined) clearTimeout(timer)
@@ -2007,11 +2049,11 @@ export class BrowserHostHub {
     const entry = this.#entry(hostId)
     const callSignal = abortSignalOf(signal)
     if (typeof entry.carrier.connect === 'function') await entry.carrier.connect(callSignal)
-                                                                                        
+// Public change history: docs/PUBLIC-CHANGES.md
     if (typeof entry.carrier.ensureCapability === 'function') await entry.carrier.ensureCapability(message.method, callSignal)
     callSignal.throwIfAborted()
     const request = workspaceFileBytesRequest(message, hostId, this.#codec, entry.carrier.upstreamVersion)
-    return relayWorkspaceFileBytes(this.#perHost, hostId, request, response, callSignal)
+    return relayWorkspaceFileBytes(this.#perHost, hostId, request, response, callSignal, () => this.filePreviewCache())
   }
 
   async call(endpoint, payload, signal) {
@@ -2084,9 +2126,10 @@ export class BrowserHostHub {
       let count = 0
       let lastSeq
       let generationBaseline = false
+      let entry
       this.#recordDiagnostic({ phase: 'stream_open', endpoint, hostId, sessionId: this.#diagnosticSessionId(endpoint, payload) })
       try {
-        const entry = this.#entry(hostId)
+        entry = this.#entry(hostId)
         const source = await entry.carrier.open(endpoint, mapPayloadForHost(endpoint, payload, hostId, this.#codec), signal, { diagnosticOwner: 'consumer' })
         for await (const raw of source) {
           const sequence = diagnosticSequence(raw)
@@ -2109,7 +2152,7 @@ export class BrowserHostHub {
         const failure = classifyStreamFailure(signal.reason?.streamFailure ? signal.reason : error, { stage: generationBaseline ? 'live' : 'bootstrap', ...signal.reason?.streamFailure ? {} : { signal } })
         this.#recordDiagnostic({ phase: failure.reason === 'aborted' ? 'stream_cancel' : 'stream_error', endpoint, hostId, sessionId: this.#diagnosticSessionId(endpoint, payload), ...failure, code: streamFailureDiagnosticCode(failure.reason), count, lastSeq, durationMs: Date.now() - startedAt })
         // Only this Host stops on a terminal protocol/auth/resource error.
-        if (!failure.recoverable) break
+        if (!failure.recoverable && !await waitForHostReplacement(entry, signal)) break
       }
       if (signal.aborted) break
       await wait(retry, signal)
@@ -2135,7 +2178,7 @@ export class BrowserHostHub {
     const stop = () => lifetime.abort(outerSignal.reason)
     outerSignal.addEventListener('abort', stop, { once: true })
     const queue = new AsyncQueue()
-                                                                                                                                                   
+// Public change history: docs/PUBLIC-CHANGES.md
     if (endpoint === 'workspace/follow') {
       const currentHosts = new Set(entries.map(entry => entry.hostId))
       for (const hostId of this.#workspacePins.keys()) if (!currentHosts.has(hostId)) this.#workspacePins.delete(hostId)
@@ -2220,6 +2263,24 @@ export class BrowserHostHub {
     }
   }
 
+  async *#openSessionFollow(hostId, payload, signal) {
+    let retry = this.#retryDelayMs
+    while (!signal.aborted) {
+      let opened = false
+      try {
+        const source = await this.#entry(hostId).carrier.open('session/follow', mapPayloadForHost('session/follow', payload, hostId, this.#codec), signal, { diagnosticOwner: 'consumer' })
+        for await (const frame of source) { opened = true; yield frame }
+        return
+      } catch (error) {
+        if (signal.aborted) return
+        if (opened || !classifyStreamFailure(error).recoverable) throw error
+      }
+      // 首帧前的只读连接使用既有Host读泵的退避，首帧后由官方流生命周期重开。
+      await wait(retry, signal)
+      retry = retry === 0 ? 0 : Math.min(this.#maxRetryDelayMs, Math.max(this.#retryDelayMs, retry * 2))
+    }
+  }
+
   async *#singleHostStream(endpoint, payload, signal, hostId, mapper) {
     const outerSignal = abortSignalOf(signal)
     const lifetime = new AbortController()
@@ -2246,7 +2307,8 @@ export class BrowserHostHub {
         encodeFrame: value => this.#encodeBrowser(value),
       })
       const entry = this.#entry(hostId)
-      const source = await entry.carrier.open(endpoint, mapPayloadForHost(endpoint, payload, hostId, this.#codec), lifetime.signal, { diagnosticOwner: 'consumer' })
+      const source = endpoint === 'session/follow' ? this.#openSessionFollow(hostId, payload, lifetime.signal)
+        : await entry.carrier.open(endpoint, mapPayloadForHost(endpoint, payload, hostId, this.#codec), lifetime.signal, { diagnosticOwner: 'consumer' })
       for await (const raw of source) {
         if (outerSignal.aborted) break
         const sequence = diagnosticSequence(raw)
@@ -2269,7 +2331,14 @@ export class BrowserHostHub {
       }
     } catch (error) {
       if (!outerSignal.aborted) {
-        terminalError = markStreamFailure(error, classifyStreamFailure(error, { stage: hasSnapshot ? 'live' : 'bootstrap' }))
+        const fault = classifyStreamFailure(error, { stage: hasSnapshot ? 'live' : 'bootstrap' })
+        if (endpoint === 'session/follow' && hasSnapshot && fault.recoverable) {
+          // 官方 ended(true) 产生其原生CarrierError，沿原消费者的恢复流程重开。
+          completedNormally = true
+          return
+        }
+        if (outerSignal.aborted) return
+        terminalError = markStreamFailure(error, fault)
         throw terminalError
       }
     } finally {
@@ -2359,14 +2428,47 @@ export class BrowserHostHub {
     return this.#homeValue === undefined ? fallback : this.#homeValue
   }
 
+  #reconcileRemovedSessions(hostId, state, signal, queue) {
+    if (state.removalRefresh || state.removedIds?.size === 0 || !state.removedIds) return
+    const generation = state.generation
+    let applied = false
+    state.removalRefresh = Promise.resolve().then(async () => {
+      const ids = new Map(state.removedIds)
+      let result, retry = this.#retryDelayMs
+      do {
+        result = await this.#callHost('session/list', { args: { _request: {} } }, signal, hostId)
+        if (result.ok || !classifyStreamFailure(result.error).recoverable || signal.aborted || state.generation !== generation) break
+        await wait(retry, signal)
+        retry = retry === 0 ? 0 : Math.min(this.#maxRetryDelayMs, Math.max(this.#retryDelayMs, retry * 2))
+      } while (!signal.aborted)
+      if (!result.ok || signal.aborted || state.generation !== generation || !state.ready) return
+      const items = new Map(result.value.items.map(item => [rawSessionIdentity(item.sessionId, hostId, this.#codec), item]))
+      for (const [id, version] of ids) {
+        if (state.removedIds.get(id) !== version) continue
+        state.removedIds.delete(id)
+        if ((this.#sessionListSessionVersions.get(hostId)?.get(id) ?? 0) !== version) continue
+        const item = items.get(id)
+        queue.push({ hostId, generation, frame: item
+          ? { type: 'emit', event: 'api-session/added', args: [item] }
+          : { type: 'emit', event: 'api-session/removed', args: [this.#codec.encodeCompositeId(hostId, id)] } })
+      }
+      applied = true
+    }).finally(() => {
+      state.removalRefresh = undefined
+      if (!signal.aborted && state.ready && (applied || state.generation !== generation)) this.#reconcileRemovedSessions(hostId, state, signal, queue)
+    })
+  }
+
   async #pumpInteractions(hostId, signal, queue, state) {
     const view = new InteractionView({ hostId, codec: this.#codec, mappings: state.mappings })
     let query = { waitMs: 10000 }
     let retry = this.#retryDelayMs
     let failed = false
     while (!signal.aborted) {
+      let entry
       try {
-        const snapshot = await this.#entry(hostId).carrier.interactions.read(query, signal)
+        entry = this.#entry(hostId)
+        const snapshot = await entry.carrier.interactions.read(query, signal)
         if (signal.aborted) break
         for (const frame of view.accept(snapshot)) {
           const delivery = state.mappings.get(frame.eventId)
@@ -2383,31 +2485,58 @@ export class BrowserHostHub {
         if (!failed) this.#recordDiagnostic({ phase: 'stream_error', endpoint: 'hostInteractions/v1/read', hostId,
           ...classifyStreamFailure(error, { source: 'interface', stage: 'live' }), code: /^INTERACTION_[A-Z_]+$/.test(error?.code ?? '') ? error.code : 'INTERACTION_PEER_UNAVAILABLE' })
         failed = true
-        if (error?.recoverable !== true) break
+        if (error?.recoverable !== true && !await waitForHostReplacement(entry, signal)) break
         await wait(Math.max(25, retry), signal)
         retry = Math.min(Math.max(25, this.#maxRetryDelayMs), Math.max(25, retry * 2))
       }
     }
   }
 
-  async #pumpEventsHost(hostId, payload, signal, queue, hostState, aggregateState) {
-                                                                                                                                                                 
+  async #restoreHostDirectory(hostId, hostState, generation, signal) {
+    const request = { args: { _request: {} } }
     let retry = this.#retryDelayMs
+    while (!signal.aborted && hostState.generation === generation) {
+      const result = await this.#boundedSessionListHostCall(request, signal, hostId, JSON.stringify(request), undefined, true, true)
+      if (signal.aborted || hostState.generation !== generation) return
+      if (!hostState.directoryPending) return
+      if (!result.ok && !classifyStreamFailure(result.error).recoverable && !await waitForHostReplacement(this.#entry(hostId), signal)) return
+      await wait(retry, signal)
+      retry = retry === 0 ? 0 : Math.min(this.#maxRetryDelayMs, Math.max(this.#retryDelayMs, retry * 2))
+    }
+  }
+
+  async #pumpEventsHost(hostId, payload, signal, queue, hostState, aggregateState) {
+// Public change history: docs/PUBLIC-CHANGES.md
+    let retry = this.#retryDelayMs
+// Public change history: docs/PUBLIC-CHANGES.md
+    let restoreDirectory = false
     while (!signal.aborted) {
       const generation = {}
+      const directoryLife = new AbortController()
+      const directorySignal = AbortSignal.any([signal, directoryLife.signal])
+      let directoryRecovery
       hostState.remoteClientId = undefined
       hostState.byRawEventId.clear()
       hostState.pendingLateItems.clear()
       hostState.ready = false
       hostState.generation = generation
+      hostState.restoreDirectory = () => {
+        if (!hostState.ready || directorySignal.aborted || hostState.generation !== generation || directoryRecovery) return
+        hostState.directoryPending = true
+        directoryRecovery = (async () => {
+          try { await this.#restoreHostDirectory(hostId, hostState, generation, directorySignal) }
+          finally { directoryRecovery = undefined }
+        })()
+      }
       this.#registerSessionListTargets(hostId, aggregateState, hostState, generation)
       const startedAt = Date.now()
       let count = 0
       let lastSeq
       let generationReady = false
       let recover = true
+      let entry
       try {
-        const entry = this.#entry(hostId)
+        entry = this.#entry(hostId)
         let snapshot = false
         this.#recordDiagnostic({ phase: 'stream_open', endpoint: '$events', hostId })
         const source = await entry.carrier.open('$events', mapPayloadForHost('$events', payload, hostId, this.#codec), signal, { diagnosticOwner: 'consumer' })
@@ -2423,12 +2552,14 @@ export class BrowserHostHub {
             generationReady = true
             retry = this.#retryDelayMs
             hostState.ready = true
+            this.#reconcileRemovedSessions(hostId, hostState, signal, queue)
             if (!snapshot) {
               snapshot = true
               this.#recordDiagnostic({ phase: 'stream_snapshot', endpoint: '$events', hostId, count, lastSeq, durationMs: Date.now() - startedAt })
             }
             this.#registerSessionListTargets(hostId, aggregateState, hostState, generation)
             queue.push({ hostId, frame: { type: 'ready', clientId: raw.clientId, host: { home: raw.host.home } } })
+            if (restoreDirectory || hostState.directoryPending) hostState.restoreDirectory()
             continue
           }
           if (!generationReady || typeof hostState.remoteClientId !== 'string') throw markStreamFailure(new TypeError('Host $events frame arrived before ready'), classifyStreamFailure({ reason: 'invalid-snapshot' }, { source: 'hub', stage: 'bootstrap' }))
@@ -2449,6 +2580,11 @@ export class BrowserHostHub {
             }
           } else {
             this.#recordSessionEvent(hostId, raw)
+            if (raw.type === 'emit' && raw.event === 'api-session/removed' && typeof raw.args?.[0] === 'string') {
+              (hostState.removedIds ??= new Map()).set(raw.args[0], this.#sessionListSessionVersions.get(hostId)?.get(raw.args[0]) ?? 0)
+              this.#reconcileRemovedSessions(hostId, hostState, signal, queue)
+              continue
+            }
             queue.push({ hostId, frame: mapSessionEvent(raw, hostId, this.#codec) })
           }
         }
@@ -2461,9 +2597,12 @@ export class BrowserHostHub {
         this.#recordDiagnostic({ phase: failure.reason === 'aborted' ? 'stream_cancel' : 'stream_error', endpoint: '$events', hostId, ...failure, code: streamFailureDiagnosticCode(failure.reason), count, lastSeq, durationMs: Date.now() - startedAt })
         // Do not retry terminal errors or close another Host's global queue.
       } finally {
+        directoryLife.abort()
+        restoreDirectory = true
         if (hostState.generation === generation) {
           this.#retireSessionListPage(aggregateState, hostState, generation)
           hostState.generation = undefined
+          hostState.restoreDirectory = undefined
           hostState.ready = false
           hostState.remoteClientId = undefined
           // Retire interactions before backoff, even when the error is terminal.
@@ -2475,8 +2614,9 @@ export class BrowserHostHub {
           hostState.byRawEventId.clear()
           hostState.pendingLateItems.clear()
         }
+        if (directoryRecovery) await directoryRecovery
       }
-      if (signal.aborted || !recover) break
+      if (signal.aborted || (!recover && !await waitForHostReplacement(entry, signal))) break
       await wait(retry, signal)
       retry = retry === 0 ? 0 : Math.min(this.#maxRetryDelayMs, Math.max(this.#retryDelayMs, retry * 2))
     }
@@ -2581,7 +2721,7 @@ export function createTransportHook(hub) {
 export function apply(ctx, options = {}) {
   if (!ctx || !ctx.webServer || typeof ctx.webServer.register !== 'function') throw new TypeError('webServer.register is required')
   const runtimeInterface = options.runtimeInterface ?? ctx.runtimeInterface
-  if (!runtimeInterface || typeof runtimeInterface.wrapHostCarrier !== 'function' || typeof runtimeInterface.encodeBrowser !== 'function' || !runtimeInterface.connection || typeof runtimeInterface.connection.requestRejection !== 'function') throw new TypeError('runtimeInterface with connection/wrapHostCarrier/encodeBrowser is required')
+  if (!runtimeInterface || typeof runtimeInterface.wrapHostCarrier !== 'function' || typeof runtimeInterface.encodeBrowser !== 'function' || !runtimeInterface.connection || typeof runtimeInterface.connection.requestRejection !== 'function' || typeof runtimeInterface.connection.ownerRequestRejection !== 'function') throw new TypeError('runtimeInterface with owner-authorized connection/wrapHostCarrier/encodeBrowser is required')
   const perHost = options.perHost === undefined ? ctx.perHost : options.perHost
   const webRuntime = { webServer: ctx.webServer, authorizeRequest: request => runtimeInterface.connection.requestRejection(request) }
   const hub = new BrowserHostHub({ ...options, perHost, runtimeInterface })
@@ -2590,8 +2730,19 @@ export function apply(ctx, options = {}) {
     try {
       if (options.registerBff !== false) disposers.push(registerBff(webRuntime, hub, { ...options, perHost }))
       disposers.push(registerHostInventory(webRuntime, perHost))
+      hub.filePreviewCache()
+      disposers.push(() => hub.closeFilePreviews())
+      disposers.push(ctx.webServer.register({ kind: 'prefix', path: FILE_PREVIEW_PATH,
+        handler: createFilePreviewHandler(runtimeInterface.connection, perHost, decodeCompositeId, () => hub.filePreviewCache()) }))
       // 存量例外：file-proxy.js 的 raw file carrier 调用受其专属安全边界保护；会话、历史和控制流不走该路径。
       disposers.push(ctx.webServer.register({ kind: 'prefix', path: FILE_PROXY_PREFIX, handler: createFileProxyHandler(runtimeInterface.connection, perHost, decodeCompositeId) }))
+      // 原生 Worker 直接上传到 /api；只转发复合会话，本地及其它请求仍走官方处理器。
+      const upload = createFileProxyHandler(runtimeInterface.connection, perHost, decodeCompositeId, '')
+      disposers.push(ctx.on('connection/request', (request, response, next) => {
+        const url = new URL(request.url, DEFAULT_BASE_URL)
+        return url.pathname === NATIVE_FILE_UPLOAD_PATH && isCompositeId(url.searchParams.get('sessionId'))
+          ? upload(request, response) : next()
+      }))
       if (options.injectBootstrap !== false) disposers.push(registerBrowserBootstrap({ on: ctx.on?.bind(ctx) }, options))
       // This opt-in is only for a Node-side harness. In production the actual
       // browser gets the hook from the protected script-src route above; do

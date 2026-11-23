@@ -1,5 +1,0 @@
-- insert:
-    - id: rc1-host-carriers
-      name: dsh-rc1-host-carriers
-      config:
-        targets: []

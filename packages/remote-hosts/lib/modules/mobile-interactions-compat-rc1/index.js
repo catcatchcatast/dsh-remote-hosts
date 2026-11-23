@@ -1,7 +1,6 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                             
+// Public change history: docs/PUBLIC-CHANGES.md
 import { HostInteractionState } from './host-interaction-state.js'
-                                                                                                                                         
-                                                                                                                                     
+// Public change history: docs/PUBLIC-CHANGES.md
 import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import { createCarrier } from './carrier.js'

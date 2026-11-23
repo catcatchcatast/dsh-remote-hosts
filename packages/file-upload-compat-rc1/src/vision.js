@@ -1,5 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                               
-                                                                                                                                                   
+// Public change history: docs/PUBLIC-CHANGES.md
 /** Image description ("讲解图片") via an OpenAI-compatible vision endpoint.
  *
  * Mature design, endpoint auto-discovery chain:

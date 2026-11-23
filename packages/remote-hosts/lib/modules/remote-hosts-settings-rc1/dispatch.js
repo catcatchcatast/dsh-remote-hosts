@@ -1,6 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                   
-                                                                                                                                     
-                                                                                                                                             
+// Public change history: docs/PUBLIC-CHANGES.md
 import { validateTarget } from '../rc1-host-carriers/index.js'
 import { hostIdFromAlias, isConcreteSshAlias, parseConcreteSshAliases, suggestLocalPort } from './ssh-aliases.js'
 import { publicErrorCode, publicHost } from './public.js'
@@ -85,6 +83,8 @@ export function createDispatcher(deps) {
       const row = live.remotes?.[target.id] ?? {}
       hosts.push(publicHost({
         ...target,
+        localPort: row.localPort ?? target.localPort,
+        remotePort: target.runtime === 'desktop' ? row.remotePort ?? null : target.remotePort,
         kind: 'remote',
         state: row.state,
         lastError: row.lastError ? publicErrorCode(new Error(row.lastError)) : null,

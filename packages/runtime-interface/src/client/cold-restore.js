@@ -1,7 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                       
-                                                                                                                                               
-                                                                                                                                               
-                                                                                                                                               
+// Public change history: docs/PUBLIC-CHANGES.md
 /** Own one cold list consumption and its ordered public completion in this page. */
 export function bindColdRestoreSelection(scope, bridge) {
   if (typeof bridge?.bindColdRestoreReader !== 'function') return () => {}

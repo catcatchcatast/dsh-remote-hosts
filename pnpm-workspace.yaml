@@ -1,6 +1,5 @@
 packages:
   - 'packages/runtime-interface'
   - 'packages/remote-hosts'
-  - 'packages/fork-inbox-guard'
 nodeLinker: hoisted
 autoInstallPeers: false

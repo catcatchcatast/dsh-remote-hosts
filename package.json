@@ -1,35 +1,18 @@
 {
   "name": "dsh-remote-hosts-workspace",
-  "version": "0.2.0",
+  "version": "0.2.0-rc.2",
   "private": true,
-  "description": "DSH 0.2.1-rc.2 public plugin sources and prebuilt packages",
-  "packageManager": "pnpm@11.19.0",
+  "license": "Apache-2.0",
   "type": "module",
+  "packageManager": "pnpm@11.19.0",
   "scripts": {
     "build": "node tools/release-profile.mjs build",
-    "test": "node --test tests/public-package.test.mjs",
-    "check:interface": "node tools/check-interface-boundary.mjs",
-    "check": "pnpm run check:interface && pnpm run test && pnpm run build",
-    "build:remote": "node tools/release-profile.mjs build",
-    "test:contracts": "node --test tests/runtime-interface-fork-inbox.test.mjs"
+    "test": "node --import ./tools/test-sdk-loader.mjs --test tests/*.test.mjs"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "4.0.5",
-    "@deepseek-ai/dsh-atomic-write": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-home-paths": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-llm": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-web": "0.2.1-rc.2",
-    "@deepseek-ai/schemastery": "3.18.5",
-    "dsh-runtime-interface": "workspace:*",
     "tsdown": "0.22.2",
-    "typescript": "^6.0.3",
-    "jsdom": "29.1.1",
-    "vitest": "4.1.11",
-    "vite-tsconfig-paths": "6.1.1",
-    "@testing-library/react": "16.3.3",
-    "@testing-library/dom": "10.4.1",
+    "typescript": "6.0.3",
     "react": "18.3.1",
     "react-dom": "18.3.1"
-  },
-  "license": "Apache-2.0"
+  }
 }

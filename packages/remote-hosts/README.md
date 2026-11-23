@@ -1,5 +1,5 @@
-# dsh-remote-hosts
+# remote-hosts
 
-Combined remote host and existing mobile transport backend; internal modules are not separate plugins.
+配套安装和配置步骤见仓库 README.md。当前公开版本面向官方 DSH 0.2.2-rc.5。
 
-Install all three local archives in one official dsh plugin operation; see the source repository README.md. Self-authored code is Apache-2.0; third-party notices remain in LICENSES/.
+源码及许可整理见仓库 docs/PUBLIC-CHANGES.md。

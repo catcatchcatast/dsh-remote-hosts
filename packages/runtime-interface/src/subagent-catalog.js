@@ -1,4 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                           
+// Public change history: docs/PUBLIC-CHANGES.md
 // 将当前公开父目录读转换为既有移动目录，不激活Agent、不遍历后代树。
 export function createSubagentCatalogReader(service, agentRegistry, ErrorType) {
   const unavailable = () => new ErrorType('runtime-interface/capability-unavailable', 'Subagent catalog is unavailable', { method: 'listChildren' })
@@ -58,5 +58,37 @@ export function createSubagentCatalogReader(service, agentRegistry, ErrorType) {
         : entry),
       parentAvailable: agents?.get?.(parentSessionId) !== undefined,
     }
+  }
+}
+
+/** Preserve the stable direct-parent ports at the official 022 boundary. */
+export function adaptSubagents022(service, session, ErrorType) {
+  const native = name => typeof service?.[name] === 'function' ? service[name].bind(service) : undefined
+  return {
+    remoteExportList: native('remoteExportList'),
+    prompt: native('prompt'),
+    listChildren: native('listChildren') ?? async function(parentSessionId, signal) {
+      const block = await session.projections({ sessionId: parentSessionId }, signal)
+      if (block?.kind !== 'sequenced' || !Object.hasOwn(block.values, 'subagentCatalog')) {
+        throw new ErrorType('SUBAGENT_CONTROL_PROJECTIONS_UNAVAILABLE', 'Exact subagent catalog projection is unavailable')
+      }
+      return block.values.subagentCatalog
+    },
+    interruptByParent: native('interruptByParent') ?? function(childSessionId, parentSessionId, mode) {
+      if (mode !== 'continuable' || [childSessionId, parentSessionId].some(id =>
+        typeof id !== 'string' || !id || id.length > 4096 || id.includes('\0'))) {
+        throw new ErrorType('gateway/bad-request', 'Subagent interrupt address is invalid')
+      }
+      if (typeof service?.interruptByUser !== 'function') {
+        throw new ErrorType('runtime-interface/capability-unavailable', 'Subagent interrupt is unavailable')
+      }
+      // Like the old primitive, check the live activation, not a catalog or a live parent.
+      // No await separates this direct-parent check from the original user interrupt.
+      const activation = service.manager?.resident.get(childSessionId)
+      if (activation && activation.ancestors.at(-1) !== parentSessionId) {
+        throw new ErrorType('subagent/unauthorized', 'subagent does not belong to this parent', { childSessionId })
+      }
+      return service.interruptByUser(childSessionId)
+    },
   }
 }

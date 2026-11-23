@@ -1,5 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                               
-                                                                                                                                                   
+// Public change history: docs/PUBLIC-CHANGES.md
 /** Document → Markdown conversion chain.
  *
  * Three backends, most-capable first:

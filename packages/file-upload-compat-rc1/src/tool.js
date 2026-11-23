@@ -1,5 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                               
-                                                                                                                                                   
+// Public change history: docs/PUBLIC-CHANGES.md
 /** read_document tool: page through uploaded documents with on-demand
  * conversion to Markdown (text fast-path, optional MarkItDown CLI, bundled
  * markitdown-node engine, JS fallback). Reads through ctx.fs, so workspace

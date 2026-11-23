@@ -1,7 +1,6 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                           
-                                                                                                                                             
+// Public change history: docs/PUBLIC-CHANGES.md
 import { interactionToBrowserFrame } from 'dsh-runtime-interface'
-                                                                                                                                                       
+// Public change history: docs/PUBLIC-CHANGES.md
 
 /** A browser view of peer-owned interactions; no core delivery handles. */
 export class InteractionView {

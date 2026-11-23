@@ -5,10 +5,10 @@
  * `agentOperations` facade; this module does not add a Cordis service or
  * import the main bridge.
  *
- *                                                                                                                                       
- *                                                                                                                                   
- *                                                                                                                                                       
- *                                                                                                                                                           
+ *
+ *
+ *
+ *
  */
 
 export const MOBILE_AUXILIARY_COMPAT_METHODS = Object.freeze([

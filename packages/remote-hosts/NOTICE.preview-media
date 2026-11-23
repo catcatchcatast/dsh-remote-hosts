@@ -1,0 +1,8 @@
+Adapted from 439436269-ctrl/dsh-preview-media, MIT, copyright 2026 vfvrpq.
+https://github.com/439436269-ctrl/dsh-preview-media
+Original Git blobs: loopback.js 10b76d701a35ea1fdfa7ad68eefcfeda812b30db;
+mime.js 321eb44689c483e4283ef6bcaed20c00cd4720ea;
+range.js 90d62a6e98b0ecbff379d3efc2da1202aa64b851.
+Local adaptation: source bytes come from the existing authenticated per-host preview cache;
+HTML subresources retain their original host/session scope; listener closes with the plugin.
+Public change history: docs/PUBLIC-CHANGES.md

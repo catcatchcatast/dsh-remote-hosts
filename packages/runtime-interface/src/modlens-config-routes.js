@@ -1,4 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                               
+// Public change history: docs/PUBLIC-CHANGES.md
 const refusal = 'request refused: this route answers same-origin loopback only'
 function loopback(hostname) {
   if (hostname === 'localhost' || hostname === '[::1]') return true

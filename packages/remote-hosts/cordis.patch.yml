@@ -1,4 +1,16 @@
-# 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                     
+# Public change history: docs/PUBLIC-CHANGES.md
+- id: directory-picker
+  disabled: true
+# Public change history: docs/PUBLIC-CHANGES.md
+- id: ui-sidebar-documentpreview
+  config:
+    excel:
+      maxBytes: 9007199254740991
+      maxCells: 9007199254740991
 - insert:
+    - id: directory-picker-browse
+      name: '@deepseek-ai/dsh-host-directory-picker-browse'
+    - id: ui-directory-picker-browse
+      name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'
     - id: remote-hosts
       name: dsh-remote-hosts

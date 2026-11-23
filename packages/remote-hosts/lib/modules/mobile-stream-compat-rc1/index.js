@@ -1,7 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                           
-                                                                                                                                                                     
-                                                                                                                                                                       
-                                                                                                                                     
+// Public change history: docs/PUBLIC-CHANGES.md
 /**
  * Loopback-only RC1 mobile Session sync compatibility for the official DSH
  * 0.1.2-rc.1 controller faces. The sibling mobile-session-sync-rc1 package
@@ -10,12 +7,12 @@
  * deliberately does not depend on the removed rc.8 proxy layer or on an
  * implicit/current Host selection.
  *
- *                                                                                                                                       
- *                                                                                                                                             
- *                                                                                                                                                   
- *                                                                                                                                                           
- *                                                                                                                                                                       
- *                                                                                                                               
+ *
+ *
+ *
+ *
+ *
+ *
  */
 
 import { randomUUID } from 'node:crypto'
@@ -2958,7 +2955,7 @@ function convertMobileHistoryEntry(entry, sessionId, state, options = defaultV3O
 		if (raw.surfaceOp === "append") body.surfaceOp = "append";
 		else if (raw.surfaceOp !== undefined) {
 			const op = asRecord(raw.surfaceOp);
-                                                                                                                                                  
+// Public change history: docs/PUBLIC-CHANGES.md
 			// 两端是有序表面中的节点身份；先前替换可使节点顺序与序号大小不同。
 			if (op?.op !== "replace" || !isSafeSequence(op.startSeq) || !isSafeSequence(op.endSeq) || op.startSeq >= seq || op.endSeq >= seq) {
 				throw new BaselineRecoveryError("unknown-surface-operation");
@@ -3125,7 +3122,7 @@ function convertMobileHistoryEntry(entry, sessionId, state, options = defaultV3O
 			break;
 		}
 		case "subagent/update": {
-                                                                                                                                                    
+// Public change history: docs/PUBLIC-CHANGES.md
 			for (const key of [
 				"agentId",
 				"childSessionId",

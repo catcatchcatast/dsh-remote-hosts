@@ -1,8 +1,6 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                           
-                                                                                                                                             
-                                                                                                                                                   
-                                                                                                                                             
-                                                                                                                                     
+// Public change history: docs/PUBLIC-CHANGES.md
+import { WEB_022_RUNTIME_VERSION, WEB_022_RC3_RUNTIME_VERSION, WEB_022_RC5_RUNTIME_VERSION } from './web-020.js'
+// Public change history: docs/PUBLIC-CHANGES.md
 import { markStreamFailure } from './stream-failure.js'
 
 /**
@@ -22,6 +20,8 @@ const SUPPORTED_VERSIONS = new Set([
   CURRENT_STREAM_RUNTIME_VERSION,
   '0.2.0-rc.2',
   '0.2.1-rc.2',
+  WEB_022_RUNTIME_VERSION,
+  WEB_022_RC3_RUNTIME_VERSION, WEB_022_RC5_RUNTIME_VERSION,
 ])
 // The legacy converter accumulates every chunk of the trailing attempt in
 // memory, so its cache bound stays at the original 4096.  The current runtime

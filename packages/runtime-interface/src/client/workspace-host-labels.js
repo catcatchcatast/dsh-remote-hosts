@@ -1,5 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                 
-                                                                                                         
+// Public change history: docs/PUBLIC-CHANGES.md
 function hostRowSelector(kind, hostId) {
   if (hostId !== undefined && (typeof hostId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(hostId))) throw new TypeError('HOST_ID_INVALID')
   const host = hostId === undefined ? '' : btoa(hostId).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '') + '.'

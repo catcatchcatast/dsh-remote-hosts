@@ -1,5 +1,6 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                           
-                                                                                                                                             
+// Public change history: docs/PUBLIC-CHANGES.md
+import { isWebRuntimeVersion } from './web-020.js'
+// Public change history: docs/PUBLIC-CHANGES.md
 /**
  * Narrow operation boundary for Agent-owned official services.
  *
@@ -7,8 +8,8 @@
  * receive only operation DTOs; they never receive a resolved Agent, its context,
  * or an official service object.
  *
- *                                                                                                                                   
- *                                                                                                                                                       
+ *
+ *
  */
 
 export const LEGACY_AGENT_OPERATIONS_VERSION = '0.1.2-rc.1'
@@ -110,7 +111,7 @@ async function resolveAgent(sessionController, sessionId) {
 }
 
 function normalizeVersion(value) {
-  if (value !== LEGACY_AGENT_OPERATIONS_VERSION && value !== CURRENT_AGENT_OPERATIONS_VERSION && value !== '0.2.0-rc.2' && value !== '0.2.1-rc.2') {
+  if (value !== LEGACY_AGENT_OPERATIONS_VERSION && value !== CURRENT_AGENT_OPERATIONS_VERSION && !isWebRuntimeVersion(value)) {
     throw new AgentOperationError('runtime-interface/unsupported-version', 'The upstream runtime version is not supported', { version: value })
   }
   return value

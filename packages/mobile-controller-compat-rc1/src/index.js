@@ -1,14 +1,13 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                 
-                                                                                                                                               
+// Public change history: docs/PUBLIC-CHANGES.md
 /**
  * Narrow Android business-RPC compatibility bridge for the official rc1
  * Session/Workspace controller faces. It intentionally owns no event stream
  * or token bootstrap state.
  *
- *                                                                                                                                                                     
- *                                                                                                                                   
- *                                                                                                                                                 
- *                                                                                                                                                       
+ *
+ *
+ *
+ *
  */
 
 import { homedir } from 'node:os'
@@ -948,7 +947,7 @@ const PUBLIC_ERROR_MESSAGES = Object.freeze({
 
 function safePublicError(error) {
   const code = safeErrorCode(error)
-                                                                                                                                             
+// Public change history: docs/PUBLIC-CHANGES.md
   const searchDisabled = code === 'gateway/capability-unavailable' && error?.code === 'runtime-interface/capability-unavailable' &&
     error?.details?.method === 'search' && error?.details?.reason === 'session-query-disabled'
   const message = searchDisabled ? 'remote session search is disabled by the host indexing policy' : PUBLIC_ERROR_MESSAGES[code] ?? genericErrorMessage(code)

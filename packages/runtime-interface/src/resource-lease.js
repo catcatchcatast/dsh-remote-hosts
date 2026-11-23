@@ -1,5 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                               
-                                                                                                                                                   
+// Public change history: docs/PUBLIC-CHANGES.md
 const releasedError = () => Object.assign(new Error('FILE_UPLOAD_INSTALLATION_RELEASED'), { code: 'FILE_UPLOAD_INSTALLATION_RELEASED' })
 
 function disposerOf(value, capability) {

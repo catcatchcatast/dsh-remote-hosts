@@ -1,6 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                     
-                                                                                                                                               
-                                                                                                                                                                   
+// Public change history: docs/PUBLIC-CHANGES.md
 import z from 'zod'
 import { createRequire } from 'node:module'
 import { isWebRuntimeVersion } from './web-020.js'

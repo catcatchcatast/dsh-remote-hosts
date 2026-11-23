@@ -1,4 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                 
+// Public change history: docs/PUBLIC-CHANGES.md
 'use strict'
 const http = require('node:http')
 const LIMIT = 4096

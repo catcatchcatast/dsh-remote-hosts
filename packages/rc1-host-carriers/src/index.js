@@ -1,18 +1,10 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                               
-                                                                                                                                                     
-                                                                                                                                                         
+// Public change history: docs/PUBLIC-CHANGES.md
 // 只在连接参数变化时重建Host并释放旧生命周期链接。
-                                                                                                                                                   
-                                                                                                                                                   
-                                                                                                                                         
-                                                                                                                                                                       
-                                                                                                                                     
-                                                                                   
+// Public change history: docs/PUBLIC-CHANGES.md
 import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { setTimeout as delay } from 'node:timers/promises'
-import { createConnection } from 'node:net'
-import { normalizeRuntimeVersion, createInteractionPeerClient } from 'dsh-runtime-interface'
+import { createServer } from 'node:net'
+import { normalizeRuntimeVersion, createInteractionPeerClient, classifyStreamFailure, markStreamFailure } from 'dsh-runtime-interface'
 import { lazyCarrier } from './lazy-carrier.js'
 
 export const name = 'rc1-host-carriers'
@@ -25,6 +17,7 @@ export function validateTarget(target) {
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(target.alias ?? '')) throw new Error('HOST_ALIAS_INVALID')
   if (typeof target.configFile !== 'string' || !target.configFile) throw new Error('SSH_CONFIG_REQUIRED')
   for (const port of [target.localPort, target.remotePort]) if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('HOST_PORT_INVALID')
+  if (![undefined, 'desktop'].includes(target.runtime)) throw new Error('HOST_RUNTIME_INVALID')
   if (![undefined, 'none', 'systemd-user'].includes(target.launch)) throw new Error('HOST_LAUNCH_INVALID')
   return target
 }
@@ -64,37 +57,76 @@ function exposeCarrier({ hostId, carrier, label, version, raw, runtimeInterface 
 }
 
 async function capture(target, command, signal, timeoutMs = 15000) {
+  signal.throwIfAborted()
   const child = spawn('ssh', [...sshArgs(target), target.alias, command], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
   return new Promise((resolve, reject) => {
-    let output = '', bytes = 0
-    const abort = () => child.kill()
-    const timer = setTimeout(abort, timeoutMs)
-    signal.addEventListener('abort', abort, { once: true })
-    child.stdout.on('data', chunk => { bytes += chunk.length; if (bytes > 4096) child.kill(); else output += chunk.toString('utf8') })
-    child.stderr.resume()
-    child.once('error', () => { clearTimeout(timer); signal.removeEventListener('abort', abort); reject(new Error('SSH_HELPER_UNAVAILABLE')) })
-    child.once('close', code => {
+    let output = '', bytes = 0, settled = false
+    const finish = (error, kill = false) => {
+      if (settled) return
+      settled = true
       clearTimeout(timer); signal.removeEventListener('abort', abort)
-      if (signal.aborted) reject(signal.reason)
-      else if (code !== 0 || bytes > 4096) reject(new Error('SSH_HELPER_UNAVAILABLE'))
-      else resolve(output)
-    })
+      if (kill) child.kill()
+      error ? reject(error) : resolve(output)
+    }
+    const abort = () => finish(signal.reason, true)
+    const timer = setTimeout(() => finish(new Error('SSH_HELPER_UNAVAILABLE'), true), timeoutMs)
+    signal.addEventListener('abort', abort, { once: true })
+    child.stdout.on('data', chunk => { if (settled) return; bytes += chunk.length; if (bytes > 4096) finish(new Error('SSH_HELPER_UNAVAILABLE'), true); else output += chunk.toString('utf8') })
+    child.stderr.resume()
+    child.once('error', () => finish(new Error('SSH_HELPER_UNAVAILABLE')))
+    child.once('close', code => finish(signal.aborted ? signal.reason : code !== 0 ? new Error('SSH_HELPER_UNAVAILABLE') : undefined))
+    if (signal.aborted) abort()
   })
 }
 
 export function bootstrapCommand(port) {
-  if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('HOST_PORT_INVALID')
-  return `node -e "process.stdout.write(JSON.stringify(require(require('node:path').join(require('node:os').homedir(),'.dsh-mobile','read-bootstrap.cjs')).readBootstrap(${port})))"`
+  if (port !== 'desktop' && (!Number.isInteger(port) || port < 1024 || port > 65535)) throw new Error('HOST_PORT_INVALID')
+  return `node -e "process.stdout.write(JSON.stringify(require(require('node:path').join(require('node:os').homedir(),'.dsh-mobile','read-bootstrap.cjs')).readBootstrap(${port === 'desktop' ? "'desktop'" : port})))"`
 }
 
-async function socketReady(port) {
-  return new Promise(resolve => {
-    const socket = createConnection({ host: '127.0.0.1', port })
-    const finish = ready => { socket.destroy(); resolve(ready) }
-    socket.setTimeout(300)
-    socket.once('connect', () => finish(true))
-    socket.once('error', () => finish(false))
-    socket.once('timeout', () => finish(false))
+function validateBootstrapRecord(record, port) {
+  if (!Number.isInteger(port) || port < 1024 || port > 65535 || record.version !== 1 || record.port !== port) throw new Error('HOST_BOOTSTRAP_INVALID')
+  const source = new URL(record.authenticatedRootUrl)
+  if (source.protocol !== 'http:' || source.hostname !== '127.0.0.1' || source.port !== String(port) || source.pathname !== '/' || source.username || source.password || source.hash || [...source.searchParams.keys()].join() !== 'token' || !source.searchParams.get('token')) throw new Error('HOST_BOOTSTRAP_INVALID')
+  return source
+}
+
+async function forwardPort() {
+  const reservation = createServer()
+  await new Promise((resolve, reject) => {
+    reservation.once('error', reject)
+    reservation.listen({ host: '127.0.0.1', port: 0, exclusive: true }, resolve)
+  })
+  const port = reservation.address().port
+  await new Promise((resolve, reject) => reservation.close(error => error ? reject(error) : resolve()))
+  return port
+}
+
+function forwardReady(child, signal) {
+  return new Promise((resolve, reject) => {
+    let tail = ''
+    const finish = error => {
+      clearTimeout(timer)
+      child.stderr.removeListener('data', data)
+      child.removeListener('error', fail)
+      child.removeListener('close', fail)
+      signal.removeEventListener('abort', abort)
+      error ? reject(error) : resolve()
+    }
+    const data = chunk => {
+      const text = tail + chunk.toString('utf8')
+      tail = text.slice(-256)
+      // OpenSSH 8.9/10.0均在转发成功后进入client_loop，失败由ExitOnForwardFailure退出。
+      if (text.includes('Entering interactive session.')) finish()
+    }
+    const fail = () => finish(new Error('SSH_FORWARD_UNAVAILABLE'))
+    const abort = () => finish(new Error('CARRIER_DISCONNECTED'))
+    const timer = setTimeout(() => finish(new Error('SSH_FORWARD_TIMEOUT')), 15000)
+    child.stderr.on('data', data)
+    child.once('error', fail)
+    child.once('close', fail)
+    signal.addEventListener('abort', abort, { once: true })
+    if (signal.aborted) abort()
   })
 }
 
@@ -107,7 +139,22 @@ export async function connectSshCarrier(target, lifetime, createCarrier, WebSock
   }
   const controller = new AbortController()
   const signal = AbortSignal.any([lifetime, controller.signal])
-  const child = spawn('ssh', [...sshArgs(target), '-N', '-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', '-L', `127.0.0.1:${target.localPort}:127.0.0.1:${target.remotePort}`, '-C', target.alias], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
+  let desktopMaterial
+  if (target.runtime === 'desktop') {
+    try {
+      desktopMaterial = await capture(target, bootstrapCommand('desktop'), signal)
+      const record = JSON.parse(desktopMaterial)
+      validateBootstrapRecord(record, record.port)
+      target = { ...target, remotePort: record.port }
+    } catch {
+      signal.throwIfAborted()
+      throw new Error('HOST_CONNECTION_FAILED_BOOTSTRAP_READ')
+    }
+  }
+  signal.throwIfAborted()
+  const localPort = await forwardPort()
+  signal.throwIfAborted()
+  const child = spawn('ssh', [...sshArgs(target), '-v', '-N', '-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', '-L', `127.0.0.1:${localPort}:127.0.0.1:${target.remotePort}`, '-C', target.alias], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
   child.stderr.resume()
   let ended = false, killIntent = false
   const closed = new Promise(resolve => {
@@ -132,15 +179,11 @@ export async function connectSshCarrier(target, lifetime, createCarrier, WebSock
   closed.then(() => lifetime.removeEventListener('abort', abort))
   let stage = 'FORWARD'
   try {
-    const deadline = Date.now() + 15000
-    while (!ended && !await socketReady(target.localPort)) {
-      if (Date.now() >= deadline) throw new Error('SSH_FORWARD_TIMEOUT')
-      await delay(100, undefined, { signal })
-    }
+    await forwardReady(child, signal)
     signal.throwIfAborted()
     stage = 'BOOTSTRAP_READ'
     let material
-    try { material = await capture(target, bootstrapCommand(target.remotePort), signal) }
+    try { material = desktopMaterial ?? await capture(target, bootstrapCommand(target.remotePort), signal) }
     catch (error) {
       signal.throwIfAborted()
       if (target.launch !== 'systemd-user') throw error
@@ -150,19 +193,26 @@ export async function connectSshCarrier(target, lifetime, createCarrier, WebSock
     }
     stage = 'BOOTSTRAP_VALIDATE'
     const record = JSON.parse(material)
-    if (record.version !== 1 || record.port !== target.remotePort) throw new Error('HOST_BOOTSTRAP_INVALID')
-    const source = new URL(record.authenticatedRootUrl)
-    if (source.hostname !== '127.0.0.1' || source.port !== String(target.remotePort) || source.pathname !== '/' || source.username || source.password || source.hash || [...source.searchParams.keys()].join() !== 'token') throw new Error('HOST_BOOTSTRAP_INVALID')
-    const origin = `http://127.0.0.1:${target.localPort}`
+    const source = validateBootstrapRecord(record, target.remotePort)
+    const origin = `http://127.0.0.1:${localPort}`
     const entry = new URL('/', origin); entry.search = source.search
     stage = 'AUTHENTICATION'
     const carrier = await createCarrier(origin, entry.href, WebSocket, signal, { diagnostics, hostId: target.id, entryId })
     signal.throwIfAborted()
-    return { carrier, closed, close, entryId, signal }
-  } catch {
+    const endpointChanged = target.runtime === 'desktop' ? async requestSignal => {
+      const latest = JSON.parse(await capture(target, bootstrapCommand('desktop'), requestSignal))
+      validateBootstrapRecord(latest, latest.port)
+      // 同一进程热加载会更新别名实例号，不据此关闭仍然健康的读者。
+      return latest.port !== record.port || (Number.isSafeInteger(latest.pid) && latest.pid > 0 && Number.isSafeInteger(record.pid) && record.pid > 0 && latest.pid !== record.pid)
+    } : undefined
+    return { carrier, closed, close, entryId, signal, localPort, remotePort: target.remotePort, ...(endpointChanged ? { endpointChanged } : {}) }
+  } catch (error) {
+    const failure = classifyStreamFailure(controller.signal.aborted && !lifetime.aborted
+      ? { reason: 'transport-disconnected' } : error?.name === 'TimeoutError' ? { code: 'ETIMEDOUT' } : error)
     close('connect-failed')
     if (lifetime.aborted) lifetime.throwIfAborted()
-    throw new Error(`HOST_CONNECTION_FAILED_${stage}`)
+    const wrapped = new Error(`HOST_CONNECTION_FAILED_${stage}`)
+    throw failure.reason === 'unknown' ? wrapped : markStreamFailure(wrapped, failure)
   }
 }
 
@@ -171,11 +221,12 @@ export function createRemoteHostControl({ seedTargets, createCarrier, WebSocket,
   const hostLife = new Map()
   const lastError = new Map()
   const helperOk = new Map()
+  const resolvedPorts = new Map()
   let live = seed.map(target => ({ ...target, enabled: target.enabled !== false }))
 
   function sameConnection(before, after) {
     return before !== undefined
-      && ['alias', 'configFile', 'localPort', 'remotePort'].every(key => before[key] === after[key])
+      && ['alias', 'configFile', 'localPort', 'remotePort', 'runtime'].every(key => before[key] === after[key])
       && (before.launch ?? 'none') === (after.launch ?? 'none')
       && configuredVersion(before) === configuredVersion(after)
   }
@@ -183,6 +234,7 @@ export function createRemoteHostControl({ seedTargets, createCarrier, WebSocket,
   function stop(id) {
     hostLife.get(id)?.abort()
     hostLife.delete(id)
+    resolvedPorts.delete(id)
     const carrier = perHost.get(id)
     if (id !== 'local' && carrier) {
       carrier.close()
@@ -204,6 +256,7 @@ export function createRemoteHostControl({ seedTargets, createCarrier, WebSocket,
       try {
         entry = await connectSshCarrier(target, signal, createCarrier, WebSocket, { diagnostics: runtimeInterface.diagnostics })
         helperOk.set(target.id, true)
+        resolvedPorts.set(target.id, { localPort: entry.localPort, remotePort: entry.remotePort })
         const version = await runtimeInterface.readHostRuntimeVersion(entry.carrier, signal)
         signal.throwIfAborted()
         const carrier = runtimeInterface.wrapHostCarrier({ hostId: target.id, carrier: entry.carrier,
@@ -219,7 +272,7 @@ export function createRemoteHostControl({ seedTargets, createCarrier, WebSocket,
         throw error
       }
     }, life.signal, { diagnostics: runtimeInterface.diagnostics, hostId: target.id })
-    const carrier = { ...lazy, hostId: target.id, label: target.label,
+    const carrier = { ...lazy, hostId: target.id, label: target.label, signal: life.signal,
       runtimeInterfaceCarrier: true,
       get upstreamVersion() { return lazy.upstreamVersion },
       interactions: createInteractionPeerClient(lazy),
@@ -234,10 +287,13 @@ export function createRemoteHostControl({ seedTargets, createCarrier, WebSocket,
     snapshot() {
       const remotes = {}
       for (const target of live) {
+        const state = perHost.get(target.id)?.getState?.() ?? (target.enabled === false ? 'disabled' : 'offline')
         remotes[target.id] = {
-          state: perHost.get(target.id)?.getState?.() ?? (target.enabled === false ? 'disabled' : 'offline'),
+          state,
           lastError: lastError.get(target.id) ?? null,
           helperReadable: helperOk.get(target.id) === true,
+          localPort: resolvedPorts.get(target.id)?.localPort ?? null,
+          ...(target.runtime === 'desktop' ? { remotePort: state === 'connected' ? resolvedPorts.get(target.id)?.remotePort ?? null : null } : {}),
         }
       }
       return {

@@ -1,12 +1,9 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                   
-                                                                                                                                             
-                                                                                                                                                   
-                                                                                                                                                   
+// Public change history: docs/PUBLIC-CHANGES.md
 import { createHash, randomBytes } from 'node:crypto'
 import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync, rmSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { sanitizeStreamFailure, sanitizeTransportDiagnostic } from './stream-failure.js'
-                                                                                                                                                       
+// Public change history: docs/PUBLIC-CHANGES.md
 
 const PHASES = new Set(['carrier_error', 'carrier_close', 'carrier_drop', 'request_start', 'request_success', 'request_error', 'stream_open', 'stream_snapshot', 'stream_end', 'stream_error', 'stream_cancel', 'interaction_delivery', 'interaction_deferred', 'interaction_retry_limit', 'interaction_answer', 'interaction_rejected'])
 const ENDPOINTS = new Set(['session/follow', 'session/control', 'workspace/follow', '$events', '$events/result', 'session/list', 'workspace/archiveSession', 'host/describe', 'hostInteractions/v1/read', 'hostInteractions/v1/respond'])

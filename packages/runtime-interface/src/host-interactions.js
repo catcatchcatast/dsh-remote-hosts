@@ -1,10 +1,9 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                           
-                                                                                                                                             
-                                                                                                                                             
+// Public change history: docs/PUBLIC-CHANGES.md
+import { isModernWebRuntimeVersion } from './web-020.js'
+// Public change history: docs/PUBLIC-CHANGES.md
 import { randomUUID } from 'node:crypto'
 import { classifyStreamFailure } from './stream-failure.js'
-                                                                                                                                                       
-                                                                                                                                                         
+// Public change history: docs/PUBLIC-CHANGES.md
 
 const epochKey = Symbol.for('dsh.runtime-interface.interaction-process-epoch.v1')
 // Module/plugin reload is not a core process restart.
@@ -23,7 +22,7 @@ const cloneJson = value => {
 
 /** All official interaction vocabulary and delivery handles terminate here. */
 export function createHostInteractionSource(gateway, { upstreamVersion, sendResult, peer } = {}) {
-  const scoped = upstreamVersion === '0.2.1-rc.2'
+  const scoped = isModernWebRuntimeVersion(upstreamVersion)
   const current = scoped || upstreamVersion === '0.2.0-rc.2'
   if (scoped && (!peer || peer.principal?.kind !== 'owner' || peer.interactions !== 'answer' || !peer.signal)) return undefined
   const dispatch = current ? sendResult : gateway?.dispatchRpc?.bind(gateway)

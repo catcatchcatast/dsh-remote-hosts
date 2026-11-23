@@ -1,8 +1,6 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                     
-                                                                                                                                           
-                                                                                                                                             
+// Public change history: docs/PUBLIC-CHANGES.md
 /** Workspace protocol and identity conversion; Hub aggregates the stable pins list. */
-import { isWebRuntimeVersion } from './web-020.js'
+import { isWebRuntimeVersion, isModernWebRuntimeVersion } from './web-020.js'
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value)
 const invalid = message => { throw Object.assign(new Error(message), { code: 'runtime-interface/invalid-stream' }) }
 const ids = value => {
@@ -14,8 +12,8 @@ export const WORKSPACE_FILE_ENDPOINTS = Object.freeze(['workspaceFiles/list', 'w
 export const OFFICE_TO_PDF_ENDPOINTS = Object.freeze(['officeToPdf/render', 'officeToPdf/generation'])
 export const WORKSPACE_BINARY_ENDPOINTS = Object.freeze(['workspaceFiles/readBytes', 'officeToPdf/render'])
 export function assertWorkspaceCapability(endpoint, version) {
-  if ((WORKSPACE_FILE_ENDPOINTS.includes(endpoint) || OFFICE_TO_PDF_ENDPOINTS.includes(endpoint)) && version !== '0.2.1-rc.2') throw Object.assign(new Error('Workspace files are unavailable on this runtime'), { code: 'runtime-interface/capability-unavailable' })
-  if (endpoint === 'workspace/initializeDefault' && version !== '0.2.1-rc.2') throw Object.assign(new Error('Default workspace initialization is unavailable'), { code: 'runtime-interface/capability-unavailable' })
+  if ((WORKSPACE_FILE_ENDPOINTS.includes(endpoint) || OFFICE_TO_PDF_ENDPOINTS.includes(endpoint)) && !isModernWebRuntimeVersion(version)) throw Object.assign(new Error('Workspace files are unavailable on this runtime'), { code: 'runtime-interface/capability-unavailable' })
+  if (endpoint === 'workspace/initializeDefault' && !isModernWebRuntimeVersion(version)) throw Object.assign(new Error('Default workspace initialization is unavailable'), { code: 'runtime-interface/capability-unavailable' })
   if (!isWebRuntimeVersion(version) && ['workspace/pinSession', 'workspace/unpinSession', 'workspace/unarchiveSession'].includes(endpoint)) {
     throw Object.assign(new Error('This host has no requested workspace capability'), { code: 'runtime-interface/capability-unavailable', details: { endpoint } })
   }

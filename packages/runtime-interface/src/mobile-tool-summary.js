@@ -1,4 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                                     
+// Public change history: docs/PUBLIC-CHANGES.md
 
 const MAX_ARGUMENT_BYTES = 64 * 1024
 const MAX_OBJECT_KEYS = 64

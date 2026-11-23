@@ -1,4 +1,4 @@
-// 公开打包追溯：docs/PUBLIC-CHANGES.md                                                                                                                     
+// Public change history: docs/PUBLIC-CHANGES.md
 // 本隔离组合采用官方原生UI，仅保留多Host的读取/模型/预设绑定。
 import { bindColdRestoreSelection } from './cold-restore.js'
 import { sanitizeStreamFailure, sanitizeTransportDiagnostic } from '../stream-failure.js'
